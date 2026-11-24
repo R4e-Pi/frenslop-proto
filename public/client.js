@@ -14,19 +14,32 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 $('game').append(renderer.domElement);
 
+// Theme: Bitmap district (from Bitmap Parcel World). Asphalt night, chalk light,
+// parcel-orange land. Colors only; all gameplay is unchanged.
+const THEME = {
+  sky: '#232325', fog: ['#232325', 120, 340],
+  asphalt: '#2c2c2f', asphalt2: '#303034',
+  parcel: 0xd8722f, parcelSide: 0x6e250b,
+  chalk: '#ece7e0', btc: '#f7931a',
+  people: [0xc9c7c4, 0xd08a4f, 0xb7a89a, 0x6f7377],
+};
+
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('#7fb3e6');
-scene.fog = new THREE.Fog('#b8d3ea', 70, 320);
+scene.background = new THREE.Color(THEME.sky);
+scene.fog = new THREE.Fog(THEME.fog[0], THEME.fog[1], THEME.fog[2]);
 const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 2500);
 scene.add(camera);
 
-scene.add(new THREE.HemisphereLight(0xe3f1ff, 0x48652a, 1.2));
-const sun = new THREE.DirectionalLight(0xfff1d8, 2.4);
+// warm-white sky over a cool asphalt bounce, plain white key light
+scene.add(new THREE.HemisphereLight(0xfff3e6, 0x404046, 1.25));
+const sun = new THREE.DirectionalLight(0xffffff, 2.3);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 260 });
 sun.shadow.bias = -0.0005;
+sun.shadow.normalBias = 0.03;
 scene.add(sun, sun.target);
+const SUN_OFF = new THREE.Vector3(-34, 70, -40);
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
@@ -39,74 +52,65 @@ resize();
 // ---------------------------------------------------------------- scenery
 function rng(seed) { return () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
-function grassTexture() {
+function asphaltTexture() {
+  // 8 m tiles of road asphalt: two-tone checker plus faint colored grit
   const c = document.createElement('canvas');
-  c.width = c.height = 256;
+  c.width = c.height = 128;
   const g = c.getContext('2d');
   const r = rng(7);
-  g.fillStyle = '#4e8d2f';
-  g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 7000; i++) {
-    const l = 30 + r() * 12, s = 45 + r() * 15, h = 86 + r() * 14;
-    g.fillStyle = `hsl(${h} ${s}% ${l}%)`;
-    g.fillRect(r() * 256, r() * 256, 1 + r() * 2, 2 + r() * 4);
+  g.fillStyle = THEME.asphalt; g.fillRect(0, 0, 128, 128);
+  g.fillStyle = THEME.asphalt2; g.fillRect(0, 0, 64, 64); g.fillRect(64, 64, 64, 64);
+  for (let i = 0; i < 1400; i++) {
+    g.fillStyle = `rgba(${r() < 0.5 ? 255 : 0},${r() < 0.5 ? 255 : 0},${r() < 0.5 ? 255 : 0},0.025)`;
+    g.fillRect(r() * 128, r() * 128, 1, 1);
   }
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.repeat.set(260, 260);
+  t.repeat.set(2400 / 8, 2400 / 8);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   return t;
 }
 
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400), new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 1 }));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(2400, 2400), new THREE.MeshStandardMaterial({ map: asphaltTexture(), roughness: 0.95 }));
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-{ // grass tufts
-  const r = rng(11);
-  const geo = new THREE.ConeGeometry(0.08, 0.4, 3);
-  geo.translate(0, 0.2, 0);
-  const mesh = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 1, flatShading: true }), 5000);
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
-  for (let i = 0; i < mesh.count; i++) {
-    const a = r() * Math.PI * 2, d = 4 + Math.sqrt(r()) * 170;
-    p.set(Math.cos(a) * d, 0, Math.sin(a) * d);
-    q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.4, r() * 6, (r() - 0.5) * 0.4));
-    const k = 0.5 + r() * 0.6;
-    s.set(k, k * (0.7 + r() * 0.8), k);
-    mesh.setMatrixAt(i, m.compose(p, q, s));
-    mesh.setColorAt(i, col.setHSL(0.25 + r() * 0.05, 0.5, 0.26 + r() * 0.12));
+{ // Bitmap district: orange parcels packed Mondrian-style (biggest first, first free
+  // slot), 12 m grid cells with 5 m roads between. Decoration only: the slabs are a
+  // few cm thick, so the ground stays flat at y = 0 for players and mods.
+  const U = 12, GAP = 5, SLAB = 0.06;
+  const r = rng(800000);
+  const sizes = [];
+  for (let i = 0; i < 260; i++) { const v = r(); sizes.push(v < 0.55 ? 1 : v < 0.82 ? 2 : v < 0.95 ? 3 : 4); }
+  sizes.sort((a, b) => b - a);
+  const area = sizes.reduce((n, k) => n + k * k, 0);
+  const GW = Math.ceil(Math.sqrt(area * 1.06));
+  const occ = [];
+  const row = y => { while (occ.length <= y) occ.push(new Uint8Array(GW)); return occ[y]; };
+  const fits = (x, y, k) => { for (let j = 0; j < k; j++) { const rw = row(y + j); for (let i = 0; i < k; i++) if (rw[x + i]) return false; } return true; };
+  const placed = [];
+  for (const k of sizes) {
+    let done = false;
+    for (let y = 0; !done; y++) for (let x = 0; x + k <= GW && !done; x++) {
+      if (!fits(x, y, k)) continue;
+      for (let j = 0; j < k; j++) row(y + j).fill(1, x, x + k);
+      placed.push([x, y, k]); done = true;
+    }
   }
-  scene.add(mesh);
-}
-
-{ // hills + snowy mountains ring (outside the play area)
-  const r = rng(23);
-  // distant mountains skip fog so they read as a backdrop, tinted for haze instead
-  const rock = new THREE.MeshStandardMaterial({ color: '#8d97a8', roughness: 1, flatShading: true, fog: false });
-  const snow = new THREE.MeshStandardMaterial({ color: '#f2f5fb', roughness: 0.9, flatShading: true, fog: false });
-  const hill = new THREE.MeshStandardMaterial({ color: '#4c8a33', roughness: 1, flatShading: true });
-  for (let i = 0; i < 26; i++) {
-    const a = r() * Math.PI * 2, d = 230 + r() * 90, w = 50 + r() * 70;
-    const m = new THREE.Mesh(new THREE.SphereGeometry(1, 10, 6), hill);
-    m.scale.set(w, w * (0.18 + r() * 0.15), w);
-    m.position.set(Math.cos(a) * d, -2, Math.sin(a) * d);
-    scene.add(m);
-  }
-  for (let i = 0; i < 48; i++) {
-    const a = (i / 48) * Math.PI * 2 + r() * 0.1, d = 380 + r() * 200;
-    const h = 80 + r() * 150, w = 55 + r() * 70;
-    const mtn = new THREE.Mesh(new THREE.ConeGeometry(w, h, 6 + Math.floor(r() * 3)), rock);
-    mtn.position.set(Math.cos(a) * d, h / 2 - 4, Math.sin(a) * d);
-    mtn.rotation.y = r() * 6;
-    const capH = h * (0.3 + r() * 0.12);
-    const cap = new THREE.Mesh(new THREE.ConeGeometry(w * (capH / h) * 1.04, capH, mtn.geometry.parameters.radialSegments), snow);
-    cap.position.y = h / 2 - capH / 2 + 0.5;
-    mtn.add(cap);
-    scene.add(mtn);
-  }
+  const ox = -GW * U / 2, oz = -occ.length * U / 2;
+  const top = new THREE.MeshStandardMaterial({ color: THEME.parcel, roughness: 0.93 });
+  const side = new THREE.MeshStandardMaterial({ color: THEME.parcelSide, roughness: 0.95 });
+  const slabs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, SLAB, 1), [side, side, top, side, side, side], placed.length);
+  const m = new THREE.Matrix4();
+  placed.forEach(([x, y, k], i) => {
+    const w = k * U - GAP;
+    slabs.setMatrixAt(i, m.makeScale(w, 1, w).setPosition(ox + (x + k / 2) * U, SLAB / 2, oz + (y + k / 2) * U));
+  });
+  slabs.receiveShadow = true;
+  slabs.frustumCulled = false;
+  scene.add(slabs);
 }
 
 // ---------------------------------------------------------------- shapes
@@ -204,32 +208,61 @@ function updateEntities(dt) {
 
 // ---------------------------------------------------------------- other players
 const others = new Map();
-function hue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0; return (h % 360) / 360; }
+function hue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; }
 function nameSprite(name) {
+  // dark pill, bitcoin-orange dot, chalk text (Bitmap Parcel World name tag)
   const c = document.createElement('canvas');
-  c.width = 256; c.height = 64;
   const g = c.getContext('2d');
-  g.font = '600 34px system-ui, sans-serif';
-  const w = Math.min(248, g.measureText(name).width + 28);
-  g.fillStyle = 'rgba(10,16,22,0.65)';
-  g.beginPath(); g.roundRect((256 - w) / 2, 8, w, 48, 24); g.fill();
-  g.fillStyle = '#f3efe6'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText(name, 128, 33, 230);
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false }));
-  s.scale.set(1.6, 0.4, 1);
-  s.position.y = 2.15;
+  const font = '600 30px Archivo, system-ui, sans-serif';
+  g.font = font;
+  const w = Math.min(512, Math.ceil(g.measureText(name).width) + 36);
+  c.width = w; c.height = 48;
+  g.font = font;
+  g.fillStyle = 'rgba(20,20,22,0.82)';
+  g.beginPath(); g.roundRect(0, 0, w, 48, 10); g.fill();
+  g.fillStyle = THEME.btc; g.fillRect(14, 20, 8, 8);
+  g.fillStyle = THEME.chalk; g.textBaseline = 'middle';
+  g.fillText(name, 28, 26, w - 36);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthTest: false }));
+  s.scale.set(0.32 * w / 48, 0.32, 1);
+  s.position.y = 2.18;
+  s.renderOrder = 9;
   return s;
+}
+function makeMannequin(hex) {
+  // jointed mannequin from Bitmap Parcel World (static pose)
+  const mat = new THREE.MeshStandardMaterial({ color: hex, roughness: 0.58, metalness: 0.04 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x232325, roughness: 0.7 });
+  const body = new THREE.Group();
+  const add = (p, geo, m, x, y, z) => { const me = new THREE.Mesh(geo, m); me.position.set(x, y, z); me.castShadow = true; p.add(me); return me; };
+  const cyl = (rt, rb, h) => new THREE.CylinderGeometry(rt, rb, h, 12);
+  add(body, new THREE.BoxGeometry(0.32, 0.17, 0.2), mat, 0, 0.98, 0);
+  const torso = add(body, cyl(0.19, 0.145, 0.52), mat, 0, 1.3, 0); torso.scale.z = 0.66;
+  add(body, new THREE.BoxGeometry(0.34, 0.06, 0.215), dark, 0, 1.06, 0);
+  add(body, cyl(0.05, 0.06, 0.1), mat, 0, 1.6, 0);
+  const head = add(body, new THREE.SphereGeometry(0.12, 16, 12), mat, 0, 1.76, 0); head.scale.set(0.95, 1.32, 1.05);
+  add(body, new THREE.BoxGeometry(0.075, 0.016, 0.03), dark, 0, 1.705, 0.118);
+  const limb = (x, y, l1, l2, r1, r2) => {
+    const p = new THREE.Group(); p.position.set(x, y, 0); body.add(p);
+    add(p, cyl(r1, r1 * 0.82, l1), mat, 0, -l1 / 2, 0);
+    const k = new THREE.Group(); k.position.y = -l1; p.add(k);
+    add(k, cyl(r2, r2 * 0.78, l2), mat, 0, -l2 / 2, 0);
+    return { p, k };
+  };
+  const lArm = limb(-0.25, 1.52, 0.3, 0.28, 0.05, 0.043), rArm = limb(0.25, 1.52, 0.3, 0.28, 0.05, 0.043);
+  add(lArm.k, new THREE.SphereGeometry(0.048, 8, 6), mat, 0, -0.31, 0);
+  add(rArm.k, new THREE.SphereGeometry(0.048, 8, 6), mat, 0, -0.31, 0);
+  const lLeg = limb(-0.1, 0.93, 0.46, 0.44, 0.078, 0.062), rLeg = limb(0.1, 0.93, 0.46, 0.44, 0.078, 0.062);
+  add(lLeg.k, new THREE.BoxGeometry(0.1, 0.07, 0.24), mat, 0, -0.47, 0.05);
+  add(rLeg.k, new THREE.BoxGeometry(0.1, 0.07, 0.24), mat, 0, -0.47, 0.05);
+  lArm.p.rotation.z = -0.12; rArm.p.rotation.z = 0.12;
+  return body;
 }
 function makeAvatar(id, name) {
   const g = new THREE.Group();
-  const col = new THREE.Color().setHSL(hue(name + id), 0.6, 0.55);
-  const body = new THREE.Mesh(GEO.capsule, new THREE.MeshStandardMaterial({ color: col, roughness: 0.7 }));
-  body.scale.set(0.7, 1.4, 0.7); body.position.y = 0.75; body.castShadow = true;
-  const head = new THREE.Mesh(GEO.sphere, new THREE.MeshStandardMaterial({ color: '#f1d2b0', roughness: 0.8 }));
-  head.scale.setScalar(0.5); head.position.y = 1.65; head.castShadow = true;
-  const visor = new THREE.Mesh(GEO.box, new THREE.MeshStandardMaterial({ color: '#1b1f27', roughness: 0.3 }));
-  visor.scale.set(0.36, 0.12, 0.1); visor.position.set(0, 1.68, -0.24);
-  g.add(body, head, visor, nameSprite(name));
+  const body = makeMannequin(THEME.people[hue(name + id) % THEME.people.length]);
+  body.rotation.y = Math.PI; // the mannequin faces +z; players look down -z at yaw 0
+  g.add(body, nameSprite(name));
   scene.add(g);
   return { group: g, name, tp: new THREE.Vector3(), ry: 0 };
 }
@@ -622,7 +655,7 @@ function frame() {
     o.group.position.lerp(o.tp, k);
     o.group.rotation.y = o.ry;
   }
-  sun.position.set(me.pos.x + 45, 90, me.pos.z + 30);
+  sun.position.copy(me.pos).add(SUN_OFF);
   sun.target.position.copy(me.pos);
   updateTarget();
   renderer.render(scene, camera);

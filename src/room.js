@@ -18,7 +18,7 @@ const LIMITS = {
   worldRadius: 400,
 };
 const SHAPES = new Set(['box', 'sphere', 'cylinder', 'cone', 'torus', 'capsule']);
-const DEFAULT_WORLD = { gravity: 9.8, sky: '#7fb3e6', fog: ['#b8d3ea', 70, 320] };
+const DEFAULT_WORLD = { gravity: 9.8, sky: '#232325', fog: ['#232325', 120, 340] }; // Bitmap district night
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const num = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
