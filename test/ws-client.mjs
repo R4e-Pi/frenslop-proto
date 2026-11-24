@@ -1,0 +1,12 @@
+import WebSocket from 'ws';
+const [port, room, prompt] = process.argv.slice(2);
+const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?room=${room}&name=tester`);
+const seen = [];
+ws.on('open', () => { ws.send(JSON.stringify({ t: 'state', p: [0,0,0], look: [0,0,-1], ry: 0 })); setTimeout(() => ws.send(JSON.stringify({ t: 'mod', prompt })), 100); });
+ws.on('message', d => { const m = JSON.parse(d); if (m.t === 'tick') return; seen.push(m.t);
+  if (m.t === 'msg') console.log('msg:', m.text);
+  if (m.t === 'ent+') console.log('entity:', m.e.id, m.e.name, JSON.stringify(m.e.position));
+  if (m.t === 'mods') console.log('mods:', m.mods.map(x => `${x.prompt}=${x.status}${x.error ? ' ('+x.error+')' : ''}`).join(', '));
+  if (m.t === 'mods' && m.mods.every(x => x.status !== 'building')) setTimeout(() => process.exit(0), 300);
+});
+setTimeout(() => { console.log('timeout'); process.exit(1); }, 15000);

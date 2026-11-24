@@ -1,0 +1,149 @@
+/* Defensive by default: everything wraps, shrinks, scrolls or truncates
+   instead of overflowing, so long prompts/names and small screens survive. */
+*, *::before, *::after { box-sizing: border-box; }
+:root {
+  --bg: rgba(14, 20, 26, 0.78);
+  --line: rgba(255, 255, 255, 0.12);
+  --text: #f3efe6;
+  --muted: rgba(243, 239, 230, 0.62);
+  --green: #8fe3a8;
+  --violet: #b9a3ff;
+  --amber: #f1c35b;
+  --red: #ff8a7a;
+  --radius: 18px;
+  font-family: ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif;
+  color: var(--text);
+}
+html, body { margin: 0; height: 100%; overflow: hidden; background: #6f9fd0; }
+#game, #game canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+[hidden] { display: none !important; }
+button, input { font: inherit; color: inherit; }
+kbd {
+  display: inline-block; min-width: 1.6em; padding: 0.1em 0.45em; margin-inline-end: 0.3em;
+  border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,0.08);
+  font-family: inherit; font-weight: 600; font-size: 0.8em; line-height: 1.4; text-align: center; white-space: nowrap;
+}
+.muted { color: var(--muted); margin: 0; }
+.small { font-size: 0.82rem; }
+h1, h2 { margin: 0; }
+
+/* ---------- menu ---------- */
+#menu {
+  position: fixed; inset: 0; display: grid; place-items: center; padding: 16px;
+  background: rgba(8, 14, 20, 0.35); backdrop-filter: blur(3px); overflow-y: auto;
+}
+.card {
+  width: min(520px, 100%); padding: clamp(20px, 5vw, 40px);
+  display: flex; flex-direction: column; gap: 12px; align-items: stretch;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 28px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+}
+.card h1 { font-size: clamp(2.6rem, 9vw, 4.4rem); letter-spacing: -0.04em; text-align: center; line-height: 1; }
+.tagline { text-align: center; color: var(--muted); margin: 0 0 8px; overflow-wrap: anywhere; }
+.field { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.field span { flex: 0 0 auto; color: var(--muted); }
+.field input, #modinput, #chatinput {
+  flex: 1 1 auto; min-width: 0; width: 100%; padding: 10px 14px;
+  background: rgba(255,255,255,0.06); border: 1px solid var(--line); border-radius: 999px; outline: none;
+}
+.field input:focus, #modinput:focus, #chatinput:focus { border-color: var(--violet); }
+.card button { padding: 12px 16px; border-radius: 999px; border: 1px solid var(--line); cursor: pointer; background: rgba(255,255,255,0.06); }
+.card button.primary { background: var(--green); color: #0d1a12; font-weight: 700; font-size: 1.15rem; border: 0; padding: 16px; }
+.card button.secondary { color: var(--amber); border-color: rgba(241,195,91,0.35); }
+.card button:hover { filter: brightness(1.08); }
+#status { text-align: center; overflow-wrap: anywhere; }
+.controls {
+  list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 8px 14px; justify-content: center;
+  color: var(--muted); font-size: 0.88rem;
+}
+.controls li { white-space: nowrap; }
+
+/* ---------- HUD ---------- */
+#hud { position: fixed; inset: 0; pointer-events: none; }
+#crosshair { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; transform: translate(-50%, -50%); }
+#crosshair::before, #crosshair::after { content: ""; position: absolute; filter: drop-shadow(0 0 1px rgba(0,0,0,0.8)); }
+#crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); background: linear-gradient(to bottom, #fff 32%, transparent 32% 68%, #fff 68%); }
+#crosshair::after { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); background: linear-gradient(to right, #fff 32%, transparent 32% 68%, #fff 68%); }
+
+#prompt {
+  position: absolute; left: 50%; top: calc(50% + 44px); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; max-width: min(420px, calc(100vw - 24px));
+  padding: 10px 16px; background: var(--bg); border: 1px solid var(--line); border-radius: 14px;
+  font-weight: 700; font-size: 1.15rem;
+}
+.prompt-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+#feed {
+  position: absolute; left: 16px; bottom: 110px; width: min(420px, calc(100vw - 32px));
+  display: flex; flex-direction: column; gap: 4px; font-size: 0.92rem;
+}
+#feed .line {
+  align-self: flex-start; max-width: 100%; padding: 5px 10px; border-radius: 10px; background: rgba(10,16,22,0.6);
+  overflow-wrap: anywhere; transition: opacity 1s;
+}
+#feed .line.sys { color: var(--muted); font-style: italic; }
+#feed .line.mod b { color: var(--violet); }
+#feed .line b { color: var(--green); margin-inline-end: 6px; }
+#feed .line.fade { opacity: 0; }
+
+#hotbar {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+  display: flex; gap: 6px; padding: 6px; max-width: calc(100vw - 24px); overflow-x: auto;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 18px;
+}
+.slot {
+  position: relative; flex: 0 0 auto; width: 58px; height: 58px; display: grid; place-items: center;
+  border: 1px solid transparent; border-radius: 13px; font-size: 1.7rem;
+}
+.slot.on { border-color: var(--amber); background: rgba(241,195,91,0.12); }
+.slot .n { position: absolute; left: 6px; top: 3px; font-size: 0.7rem; color: var(--muted); }
+.slot.on .n { color: var(--amber); }
+.slot .label {
+  position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%);
+  max-width: 180px; padding: 3px 8px; border-radius: 8px; background: var(--bg);
+  font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: none;
+}
+.slot.on .label { display: block; }
+#hint { position: absolute; right: 16px; bottom: 22px; color: var(--muted); font-size: 0.82rem; text-shadow: 0 1px 2px rgba(0,0,0,0.6); max-width: 40vw; text-align: right; }
+#driving { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: var(--bg); font-size: 0.9rem; white-space: nowrap; }
+
+/* ---------- panels ---------- */
+.panel {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  width: min(560px, calc(100vw - 24px)); padding: 18px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius);
+  backdrop-filter: blur(8px); display: flex; flex-direction: column; gap: 10px;
+}
+#modpanel { bottom: 96px; max-height: calc(100dvh - 120px); }
+.panel-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.panel-head h2 { color: var(--violet); font-size: 1.25rem; }
+.chip { padding: 2px 10px; border-radius: 999px; background: rgba(143,227,168,0.15); color: var(--green); font-size: 0.8rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#modform { display: flex; gap: 8px; min-width: 0; }
+#modform button {
+  flex: 0 0 auto; padding: 10px 16px; border: 0; border-radius: 999px; cursor: pointer;
+  background: var(--violet); color: #160f2b; font-weight: 700;
+}
+#modlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; min-height: 0; }
+#modlist li {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,0.05);
+}
+#modlist .what { flex: 1 1 auto; min-width: 0; }
+#modlist .what .p { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#modlist .what .meta { display: block; font-size: 0.76rem; color: var(--muted); overflow-wrap: anywhere; }
+#modlist .state { flex: 0 0 auto; font-size: 0.76rem; padding: 2px 8px; border-radius: 999px; background: rgba(255,255,255,0.08); }
+#modlist .state.building { color: var(--amber); animation: pulse 1.2s infinite; }
+#modlist .state.live { color: var(--green); }
+#modlist .state.failed, #modlist .state.crashed { color: var(--red); }
+#modlist button { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line); background: none; cursor: pointer; line-height: 1; }
+@keyframes pulse { 50% { opacity: 0.45; } }
+
+#chatform { position: fixed; left: 16px; bottom: 76px; width: min(420px, calc(100vw - 32px)); }
+#scores { top: 18vh; max-height: 60dvh; }
+#scorelist { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+#scorelist li { padding: 6px 4px; border-bottom: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 560px) {
+  #hint { display: none; }
+  .slot { width: 48px; height: 48px; font-size: 1.4rem; }
+}

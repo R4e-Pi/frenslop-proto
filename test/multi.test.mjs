@@ -1,0 +1,14 @@
+import WebSocket from 'ws';
+const port = process.argv[2] || 8090;
+const open = name => new Promise(r => { const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?room=demo&name=${name}`); ws.msgs = []; ws.on('message', d => ws.msgs.push(JSON.parse(d))); ws.on('open', () => r(ws)); });
+const a = await open('alice'), b = await open('bob');
+a.send(JSON.stringify({ t: 'state', p: [3, 0, 4], look: [0, 0, -1], ry: 1 }));
+a.send(JSON.stringify({ t: 'chat', text: 'hi bob' }));
+await new Promise(r => setTimeout(r, 400));
+const hello = b.msgs.find(m => m.t === 'hello');
+const tick = b.msgs.filter(m => m.t === 'tick').at(-1);
+console.log('bob sees restored mods:', hello.mods.map(m => `${m.prompt}=${m.status}`).join(', '));
+console.log('bob sees entities:', hello.entities.length, '· items:', hello.items.map(i => i.name));
+console.log('bob sees alice at:', JSON.stringify(tick.players.find(p => p[1] === 'alice')?.[2]));
+console.log('bob got chat:', b.msgs.filter(m => m.t === 'msg' && m.from === 'alice').map(m => m.text));
+process.exit(0);

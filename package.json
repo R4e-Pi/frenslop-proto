@@ -1,0 +1,22 @@
+{
+  "name": "frenslop-proto",
+  "version": "1.0.0",
+  "description": "Type anything, your local LLM builds it into a shared multiplayer 3D world",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "mock": "LLM_PROVIDER=mock node server.js",
+    "test": "node test/sandbox.test.mjs > /dev/null && node test/mocks.test.mjs && node test/slow-model.test.mjs"
+  },
+  "author": "R4e-Pi",
+  "license": "MIT",
+  "dependencies": {
+    "quickjs-emscripten": "^0.32.0",
+    "three": "^0.187.0",
+    "ws": "^8.23.0"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  }
+}
