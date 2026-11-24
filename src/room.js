@@ -24,6 +24,9 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const num = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 const vec = (a, d, lo, hi) => [0, 1, 2].map(i => clamp(num(a?.[i], d[i]), lo, hi));
 const colorOk = c => typeof c === 'string' && c.length < 32 && /^[#a-z0-9(),.% ]+$/i.test(c);
+// wrap an angle into (-π, π] so ever-growing rotations (spinning mods, long drives) never hit a clamp
+const wrapAngle = a => a - Math.PI * 2 * Math.floor((a + Math.PI) / (Math.PI * 2));
+const rot = (a, d) => vec(a, d, -1e9, 1e9).map(wrapAngle);
 const text = (s, n) => String(s ?? '').replace(/[\u0000-\u001f]/g, ' ').slice(0, n);
 
 function cleanPart(p) {
@@ -111,7 +114,7 @@ export class Room {
         const e = this.entities.get(msg.id);
         if (!e || e.driver !== client.id) break;
         e.position = vec(msg.p, e.position, -LIMITS.worldRadius, LIMITS.worldRadius);
-        e.rotation = vec(msg.r, e.rotation, -10, 10);
+        e.rotation = rot(msg.r, e.rotation);
         this.dirty.add(e.id);
         break;
       }
@@ -150,6 +153,7 @@ export class Room {
       this.#system(`built "${prompt}" in ${(mod.ms / 1000).toFixed(1)}s`);
       this.#save();
     } catch (e) {
+      if (!this.mods.has(modId)) return; // removed while building: nothing to report
       mod.status = 'failed';
       mod.error = text(e.message, 300);
       console.warn(`[${this.id}] build failed "${prompt}": ${mod.error}`);
@@ -162,6 +166,9 @@ export class Room {
   // Load code into a fresh sandbox. Returns null on success or an error string
   // that the LLM layer feeds back to the model for a retry.
   #tryInstall(mod, code) {
+    // Removed while the model was still writing: accept the code so the LLM layer
+    // stops retrying, but install nothing (no orphaned entities or sandbox).
+    if (!this.mods.has(mod.id)) return null;
     this.#teardown(mod);
     let sb;
     try {
@@ -228,7 +235,7 @@ export class Room {
           id: o.id, mod: mod.id, name: text(o.name, 40),
           parts: parts.length ? parts : [cleanPart({})],
           position: vec(o.position, [0, 0, 0], -LIMITS.worldRadius, LIMITS.worldRadius),
-          rotation: vec(o.rotation, [0, 0, 0], -10, 10),
+          rotation: rot(o.rotation, [0, 0, 0]),
           solid: !!o.solid,
           physics: dynamic ? 'dynamic' : 'static',
           velocity: vec(o.velocity, [0, 0, 0], -80, 80),
@@ -242,7 +249,7 @@ export class Room {
       case 'update':
         if (!owns) return;
         if (o.position) ent.position = vec(o.position, ent.position, -LIMITS.worldRadius, LIMITS.worldRadius);
-        if (o.rotation) ent.rotation = vec(o.rotation, ent.rotation, -1e4, 1e4);
+        if (o.rotation) ent.rotation = rot(o.rotation, ent.rotation);
         this.dirty.add(ent.id);
         break;
       case 'push':

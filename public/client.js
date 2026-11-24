@@ -192,6 +192,7 @@ function removeEntity(id) {
   if (drive?.id === id) endDrive();
 }
 
+const angleDiff = (to, from) => { const d = (to - from) % (Math.PI * 2); return d > Math.PI ? d - Math.PI * 2 : d < -Math.PI ? d + Math.PI * 2 : d; };
 function updateEntities(dt) {
   const k = 1 - Math.exp(-dt * 14);
   for (const [id, rec] of ents) {
@@ -199,8 +200,10 @@ function updateEntities(dt) {
     const g = rec.group;
     tmpV.copy(g.position);
     g.position.lerp(rec.tp, k);
-    const dr = Math.abs(rec.tr.x - g.rotation.x) + Math.abs(rec.tr.y - g.rotation.y) + Math.abs(rec.tr.z - g.rotation.z);
-    if (dr > 1e-4) g.rotation.set(g.rotation.x + (rec.tr.x - g.rotation.x) * k, g.rotation.y + (rec.tr.y - g.rotation.y) * k, g.rotation.z + (rec.tr.z - g.rotation.z) * k);
+    // angles arrive wrapped to (-π, π], so turn the short way around
+    const ax = angleDiff(rec.tr.x, g.rotation.x), ay = angleDiff(rec.tr.y, g.rotation.y), az = angleDiff(rec.tr.z, g.rotation.z);
+    const dr = Math.abs(ax) + Math.abs(ay) + Math.abs(az);
+    if (dr > 1e-4) g.rotation.set(g.rotation.x + ax * k, g.rotation.y + ay * k, g.rotation.z + az * k);
     rec.delta.subVectors(g.position, tmpV);
     if (rec.boxes.length && (rec.delta.lengthSq() > 1e-10 || dr > 1e-4)) computeBoxes(rec);
   }
@@ -268,7 +271,8 @@ function makeAvatar(id, name) {
 }
 
 // ---------------------------------------------------------------- local player
-const me = { id: null, name: 'fren', pos: new THREE.Vector3(0, 0, 8), vel: new THREE.Vector3(), yaw: 0, pitch: 0, onGround: true, standingOn: null, crouch: false };
+const spawnPoint = () => new THREE.Vector3((Math.random() - 0.5) * 8, 0, 8 + Math.random() * 4);
+const me = { id: null, name: 'fren', pos: spawnPoint(), vel: new THREE.Vector3(), yaw: 0, pitch: 0, onGround: true, standingOn: null, crouch: false };
 const world = { gravity: 9.8 };
 const keys = new Set();
 let mode = 'menu';   // menu | play | mods | chat
@@ -332,7 +336,7 @@ function stepPlayer(dt) {
     else if (me.vel.y > 0) { me.pos.y = b.min.y - H - 1e-3; me.vel.y = 0; }
   }
   if (me.pos.y <= 0) { me.pos.y = 0; me.vel.y = Math.max(0, me.vel.y); me.onGround = true; }
-  if (me.pos.y < -60 || !Number.isFinite(me.pos.y)) { me.pos.set(0, 0, 8); me.vel.set(0, 0, 0); }
+  if (me.pos.y < -60 || !Number.isFinite(me.pos.y)) { me.pos.copy(spawnPoint()); me.vel.set(0, 0, 0); }
 
   camera.position.set(me.pos.x, me.pos.y + (me.crouch ? 1.0 : 1.6), me.pos.z);
 }
@@ -346,6 +350,7 @@ function stepDrive(dt) {
   const steer = playing ? (keys.has('KeyA') ? 1 : 0) - (keys.has('KeyD') ? 1 : 0) : 0;
   drive.v += (throttle * drive.speed - drive.v) * (1 - Math.exp(-dt * 2.5));
   g.rotation.y += steer * 1.9 * dt * Math.sign(drive.v || 1) * Math.min(1, Math.abs(drive.v) / 2 + 0.3);
+  g.rotation.y = Math.atan2(Math.sin(g.rotation.y), Math.cos(g.rotation.y)); // keep heading within one turn
   g.position.x += -Math.sin(g.rotation.y) * drive.v * dt;
   g.position.z += -Math.cos(g.rotation.y) * drive.v * dt;
   rec.tp.copy(g.position);
@@ -653,6 +658,7 @@ function frame() {
   const k = 1 - Math.exp(-dt * 12);
   for (const o of others.values()) {
     o.group.position.lerp(o.tp, k);
+    o.group.visible = Math.hypot(o.group.position.x - me.pos.x, o.group.position.z - me.pos.z) > 0.8;
     o.group.rotation.y = o.ry;
   }
   sun.position.copy(me.pos).add(SUN_OFF);

@@ -20,22 +20,35 @@ On the Pi (or anywhere with Node ≥ 18.17):
 cd ~/frenslop-proto
 npm install
 cp .env.example .env        # OLLAMA_URL already points at the Jetson (192.168.1.213:11434)
-npm start                   # → http://<pi-ip>:8090/r/lobby
+npm start                   # → http://<pi-ip>:8090/r/lobby  (your Pi uses PORT=8095)
 ```
 
 On the Jetson, make sure the model is pulled. Ollama is already bound to `0.0.0.0:11434`:
 
 ```bash
-ollama pull qwen2.5:7b             # default
-ollama pull qwen2.5-coder:7b       # optional, usually writes cleaner mod code → set OLLAMA_MODEL
+ollama pull qwen2.5:3b             # default: proven at 100% GPU on the Orin Nano at ctx 4096
 ```
 
 At startup the server checks that Ollama is reachable and the model is pulled:
-`llm: ollama http://192.168.1.213:11434 · qwen2.5:7b ✓`
+`llm: ollama http://192.168.1.213:11434 · qwen2.5:3b ✓`
+
+**About the 7B on an 8 GB Jetson:** `qwen2.5:7b` needs one 4.1 GB GPU allocation. After days of uptime,
+memory fragments and that allocation fails (`NvMap … error 12`, `cudaMalloc failed: out of memory`) even
+with plenty of RAM free. It loads after a reboot, at ctx 4096 only (8192 doesn't fit). To use it reliably, pin it:
+load it at boot and never unload it (`OLLAMA_KEEP_ALIVE=-1` on the Jetson **and** in this `.env`).
+
+Check the whole chain any time with `node test/trace.mjs "a red trampoline"`.
 
 No GPU handy? Run `npm run mock` to use canned mods so you can test the game itself.
 
 Rooms are just URLs: `/r/anything` creates a room. Share the link with friends on your LAN, or over your tailnet with `tailscale serve`. Mods are saved to `data/rooms/<room>.json` and reloaded on restart.
+
+## Theme
+
+The look is the **Bitmap district** from Bitmap Parcel World: asphalt roads, orange parcels packed
+Mondrian-style on a 12 m grid, a dark sky, jointed mannequin players, and Archivo + IBM Plex Mono type.
+The parcels are a few cm thick, so the ground stays flat at y = 0 for players and mods. The theme
+colors live in `THEME` at the top of `public/client.js` and in the `:root` variables in `public/style.css`.
 
 ## Controls
 
@@ -45,7 +58,7 @@ WASD move · shift sprint · space jump · C crouch · mouse look · LMB use ite
 
 1. A player presses K and types a prompt. The server works out `here`, a spot 8 m in front of them.
 2. `src/llm.js` sends the system prompt (`src/prompt.js`: the API reference plus 4 worked examples) and the prompt to Ollama.
-3. The reply's code block is loaded into a fresh QuickJS sandbox. If it throws, does nothing, or times out, the error goes **back to the model** ("TypeError: not a function — at line 2: world.spawnn({})") for up to `LLM_ATTEMPTS` tries.
+3. The reply's code block is loaded into a fresh QuickJS sandbox. If it throws, does nothing, or times out, the error goes **back to the model** ("TypeError: not a function — at line 2: world.spawnn({})") for up to `LLM_ATTEMPTS` tries. Each retry is a fresh, short chat (instructions + request + the error only), so it always fits a 4096 context. When retries piled up in one conversation, Ollama trimmed away the request and the model pasted its examples instead.
 4. Once it loads, the mod's ops are applied and broadcast. Its handlers (`onTick`, `onUse`, `onInteract`, `onEnter`) keep running in the sandbox. A mod that keeps erroring is marked `crashed` and stopped.
 
 ### Mod API (what the model writes against)
@@ -87,7 +100,7 @@ Shapes: box, sphere, cylinder, cone, torus, capsule. Each is a unit shape scaled
 ## Tests
 
 ```bash
-npm test                                   # sandbox limits + every mock mod loads
+npm test                                   # sandbox limits, mock mods, slow-model + robustness regressions
 node test/multi.test.mjs 8090              # two clients in room "demo" (server must be running)
 python3 test/demo-screenshots.py           # headless browser run → demo/*.png (needs playwright)
 ```

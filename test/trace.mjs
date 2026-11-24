@@ -12,13 +12,15 @@ const OLLAMA = (process.env.OLLAMA_URL || env.OLLAMA_URL || 'http://192.168.1.21
 const MODEL = process.env.OLLAMA_MODEL || env.OLLAMA_MODEL || 'qwen2.5:7b';
 const CTX = Number(process.env.OLLAMA_NUM_CTX || env.OLLAMA_NUM_CTX || 8192);
 const PROMPT = process.argv[2] || 'a red trampoline';
+const KA = process.env.OLLAMA_KEEP_ALIVE || env.OLLAMA_KEEP_ALIVE || '30m';
+const keepAlive = /^-?\d+$/.test(KA) ? Number(KA) : KA;
 const t0 = Date.now();
 const ts = () => `+${((Date.now() - t0) / 1000).toFixed(1)}s`.padStart(8);
 const ok = (s) => console.log(`${ts()}  ✓ ${s}`);
 const bad = (s) => { console.log(`${ts()}  ✗ ${s}`); process.exit(1); };
 const info = (s) => console.log(`${ts()}    ${s}`);
 
-console.log(`trace: game :${PORT} · ollama ${OLLAMA} · ${MODEL} · ctx ${CTX}\n`);
+console.log(`trace: game :${PORT} · ollama ${OLLAMA} · ${MODEL} · ctx ${CTX} · keep_alive ${KA}\n`);
 
 // 1. game server up?
 try {
@@ -39,7 +41,7 @@ info(`3 asking ${MODEL} to "say hi" at ctx ${CTX} (first load can take a while)�
 try {
   const r = await fetch(`${OLLAMA}/api/chat`, {
     method: 'POST', signal: AbortSignal.timeout(300000),
-    body: JSON.stringify({ model: MODEL, stream: false, keep_alive: '30m', messages: [{ role: 'user', content: 'say hi in 3 words' }], options: { num_ctx: CTX, num_predict: 20 } }),
+    body: JSON.stringify({ model: MODEL, stream: false, keep_alive: keepAlive, messages: [{ role: 'user', content: 'say hi in 3 words' }], options: { num_ctx: CTX, num_predict: 20 } }),
   });
   if (!r.ok) bad(`3 ollama returned ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const d = await r.json();

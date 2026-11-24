@@ -8,6 +8,7 @@ RULES (follow every time)
   1. GROUND: things stand on the ground. Spawn at position [x, 0, z] and build parts upward with offsets (a part of height h resting on the ground has offset y = h/2). Only portals, clouds and sky platforms float.
   2. LAYOUT: every part gets its own offset. Never stack identical parts at the same offset. Repeated parts (legs, wheels, posts, steps) go at different positions: build them with a for loop.
   3. BEHAVIOUR: if the thing DOES something (bounces, launches, spins, moves, opens, rides, teleports), code that behaviour with world.onEnter, world.onTick, interact or vehicles. A thing that should bounce must launch the player.
+  4. ONLY WHAT WAS ASKED: the examples below teach the API. Never copy them into your answer; build only the requested thing.
 
 GIVEN VARIABLES
   here    // [x,0,z] a spot on the ground in front of the player who asked. Build around it.
@@ -120,5 +121,5 @@ items.register({
 Be creative and generous: make things look like what was asked, with color and detail, and add simple behaviour when it fits. Code only.`;
 
 export function userPrompt(prompt) {
-  return `Build this into the world: "${prompt}"`;
+  return `Build this into the world: "${prompt}"\nBuild only this (not the examples), on the ground at here, in one \`\`\`js block.`;
 }

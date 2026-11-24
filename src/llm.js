@@ -8,11 +8,17 @@ import { mockMod } from './mock.js';
 const cfg = {
   provider: process.env.LLM_PROVIDER || 'ollama',
   url: (process.env.OLLAMA_URL || 'http://192.168.1.213:11434').replace(/\/$/, ''),
-  model: process.env.OLLAMA_MODEL || 'qwen2.5:7b',
+  model: process.env.OLLAMA_MODEL || 'qwen2.5:3b',
   attempts: Number(process.env.LLM_ATTEMPTS || 3),
   timeoutMs: Number(process.env.LLM_TIMEOUT_MS || 240000),
-  numCtx: Number(process.env.OLLAMA_NUM_CTX || 8192),
+  numCtx: Number(process.env.OLLAMA_NUM_CTX || 4096),
+  // "-1" = never unload (pinned model); any Ollama duration like "30m" also works.
+  // Must match the server's OLLAMA_KEEP_ALIVE or each request resets the timer.
+  keepAlive: process.env.OLLAMA_KEEP_ALIVE || '30m',
 };
+// leave room in the context for the ~1.5k-token system prompt
+cfg.numPredict = Number(process.env.OLLAMA_NUM_PREDICT || Math.min(2048, Math.floor(cfg.numCtx * 0.35)));
+const keepAliveValue = v => (/^-?\d+$/.test(v) ? Number(v) : v);
 export const llmConfig = cfg;
 
 async function ollamaChat(messages) {
@@ -24,8 +30,8 @@ async function ollamaChat(messages) {
       model: cfg.model,
       messages,
       stream: false,
-      keep_alive: '30m',
-      options: { temperature: 0.4, num_ctx: cfg.numCtx, num_predict: 2048 },
+      keep_alive: keepAliveValue(cfg.keepAlive),
+      options: { temperature: 0.4, num_ctx: cfg.numCtx, num_predict: cfg.numPredict },
     }),
   }).catch(e => { throw new Error(`can't reach Ollama at ${cfg.url} (${e.cause?.code || e.message})`); });
   if (!res.ok) throw new Error(`Ollama ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -44,12 +50,15 @@ export async function generateMod(prompt, ctx, tryInstall) {
     return code;
   }
 
-  const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user', content: userPrompt(prompt) },
-  ];
   let lastErr = 'no attempts made';
   for (let i = 1; i <= cfg.attempts; i++) {
+    // Each attempt is a fresh 2-message chat so it always fits small contexts;
+    // a retry carries only the previous error, not the whole failed reply.
+    const retryNote = i > 1 ? `\n\nYour previous attempt failed with: ${lastErr}\nAvoid that mistake. Use only the documented API.` : '';
+    const messages = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt(prompt) + retryNote },
+    ];
     const t0 = Date.now();
     console.log(`[llm] "${prompt}" attempt ${i}: sending to ${cfg.url} (${cfg.model}, ctx ${cfg.numCtx})…`);
     const reply = await ollamaChat(messages);
@@ -59,8 +68,6 @@ export async function generateMod(prompt, ctx, tryInstall) {
     if (!err) return code;
     lastErr = err;
     console.log(`[llm]   rejected: ${err}`);
-    messages.push({ role: 'assistant', content: reply });
-    messages.push({ role: 'user', content: `That code failed: ${err}\nFix it. Use only the documented API. Reply with the full corrected code in one \`\`\`js block.` });
   }
   throw new Error(`model couldn't produce working code (${lastErr})`);
 }

@@ -167,8 +167,13 @@ export class ModSandbox {
 
 // Strip markdown fences / imports a model might add around the code.
 export function cleanModCode(text) {
-  const fence = text.match(/```(?:js|javascript)?\s*\n([\s\S]*?)```/i);
-  let code = fence ? fence[1] : text;
-  code = code.replace(/^\s*(import|export)\s.*$/gm, '');
+  // 1) first complete ```js block; 2) an opened block the model never closed
+  //    (take everything after the opening line); 3) otherwise the raw text.
+  const closed = text.match(/```[a-z]*[^\S\n]*\n([\s\S]*?)```/i);
+  const open = !closed && text.match(/```[a-z]*[^\S\n]*\n([\s\S]*)$/i);
+  let code = closed ? closed[1] : open ? open[1] : text;
+  code = code
+    .replace(/^\s*import\s.*$/gm, '')                 // imports can't work in the sandbox
+    .replace(/^(\s*)export\s+(default\s+)?/gm, '$1'); // keep the code, drop the keyword
   return code.trim();
 }
