@@ -1,6 +1,6 @@
 import { ModSandbox } from '../src/sandbox.js';
 const s = new ModSandbox('m1', { here:[0,0,-6], author:{id:'p1',name:'john'} });
-console.log(s.load(`const b = world.spawn({name:'box', position: here}); world.setGravity(1.62); world.onTick((dt,t)=>{ world.move(b,[0,Math.sin(t),0]) }); items.register({name:'ball',icon:'⚽',onUse(p){ players.message(p.id,'hi '+p.name) }})`));
+console.log(s.load(`const b = world.spawn({name:'box', position: [here[0], 0.5, here[2]]}); world.setGravity(1.62); world.onTick((dt,t)=>{ world.move(b,[0,Math.sin(t),0]) }); items.register({name:'ball',icon:'⚽',onUse(p){ players.message(p.id,'hi '+p.name) }})`));
 console.log(s.call('h1',[0.05,1.0],[]));
 console.log(s.call('h2',[{id:'p1',name:'john'}],[]));
 const bad = new ModSandbox('m2', { here:[0,0,0], author:{} });

@@ -24,11 +24,28 @@ const PORT = Number(process.env.PORT || 8090);
 const HOST = process.env.HOST || '0.0.0.0';
 const DATA = path.join(ROOT, 'data', 'rooms');
 
+const MAX_ROOMS = Number(process.env.MAX_ROOMS || 12);
+const IDLE_MS = Number(process.env.ROOM_IDLE_MINUTES || 10) * 60_000;
 const rooms = new Map();
 const getRoom = id => {
-  if (!rooms.has(id)) rooms.set(id, new Room(id, { generate: generateMod, dataDir: DATA }));
-  return rooms.get(id);
+  if (!rooms.has(id)) {
+    if (rooms.size >= MAX_ROOMS) return null;
+    rooms.set(id, new Room(id, { generate: generateMod, dataDir: DATA }));
+  }
+  const room = rooms.get(id);
+  room.lastActive = Date.now();
+  return room;
 };
+// close rooms nobody has been in for a while (stops their physics process); mods stay saved on disk
+setInterval(() => {
+  for (const [id, room] of rooms) {
+    if (room.clients.size === 0 && Date.now() - room.lastActive > IDLE_MS && !room.busy()) {
+      room.close();
+      rooms.delete(id);
+      console.log(`[${id}] closed after ${IDLE_MS / 60000} min idle`);
+    }
+  }
+}, 60_000).unref();
 const roomId = s => (String(s || '').toLowerCase().match(/^[a-z0-9-]{1,40}$/) || [null])[0];
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' };
@@ -66,6 +83,7 @@ wss.on('connection', (ws, req) => {
   const id = roomId(url.searchParams.get('room'));
   if (!id) { ws.close(1008, 'bad room'); return; }
   const room = getRoom(id);
+  if (!room) { ws.close(1013, 'too many rooms open'); return; }
   const client = room.join(ws, url.searchParams.get('name'));
   let budget = 60; // simple flood guard: ~60 msgs/sec
   const refill = setInterval(() => { budget = 60; }, 1000);
@@ -75,7 +93,7 @@ wss.on('connection', (ws, req) => {
     try { msg = JSON.parse(data); } catch { return; }
     if (msg && typeof msg.t === 'string') room.handle(client, msg);
   });
-  ws.on('close', () => { clearInterval(refill); room.leave(client); });
+  ws.on('close', () => { clearInterval(refill); room.leave(client); room.lastActive = Date.now(); });
 });
 
 server.listen(PORT, HOST, async () => {

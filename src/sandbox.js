@@ -51,6 +51,7 @@ const world = {
       bounciness: o.bounciness === undefined ? null : Number(o.bounciness),
       bullet: !!o.bullet,
     };
+    __checkGround(e);
     __ents[id] = { position: e.position.slice(), rotation: e.rotation.slice(), velocity: e.velocity.slice() };
     __ops.push(e);
     return id;
@@ -83,9 +84,33 @@ const world = {
   broadcast(text) { __ops.push({ op: 'msg', to: null, text: String(text) }); },
 };
 
+// Errors thrown here go back to the model as feedback for its retry, so they say what to do.
+function __checkGround(e) {
+  const flat = r => !Array.isArray(r) || r.every(v => Math.abs(Number(v) || 0) < 0.01);
+  if (!flat(e.rotation) || !e.parts.every(p => flat(p && p.rotation))) return; // rotated: can't judge cheaply
+  let low = Infinity;
+  for (const p of e.parts) {
+    const sy = Array.isArray(p.size) ? Number(p.size[1]) : Number(p.size);
+    const oy = Array.isArray(p.offset) ? Number(p.offset[1]) || 0 : 0;
+    low = Math.min(low, oy - (isFinite(sy) && sy > 0 ? sy : 1) / 2);
+  }
+  const depth = -(e.position[1] + low);
+  if (depth > 0.1) throw new Error(e.name + ' starts ' + depth.toFixed(2) + ' m below the ground: spawn at y = 0 and build parts upward (a part of height h resting on the ground has offset y = h/2)');
+}
+
 let __jid = 0;
 function __joint(kind, a, b, o) {
   o = o || {};
+  if (!__ents[a]) throw new Error('world.' + kind + ': the first argument must be an id returned by world.spawn in this code');
+  if (b && !__ents[b]) throw new Error('world.' + kind + ': the second argument must be an id from world.spawn, or null for the fixed world');
+  if (!b) {
+    if (kind === 'rope' && !Array.isArray(o.anchorB)) throw new Error('world.rope(' + 'thing, null, ...) hangs from the fixed world, so give anchorB: the fixed point it hangs from, above the thing (for example [x, 4, z] on a frame or post)');
+    if (kind !== 'rope' && !Array.isArray(o.anchor)) throw new Error('world.' + kind + '(thing, null, ...) is pinned to the fixed world, so give anchor: the pivot point in world space');
+  }
+  if (kind === 'rope' && !b) {
+    const top = __v(o.anchorB, [0, 0, 0]), bottom = __v(o.anchorA, __ents[a].position);
+    if (top[1] <= bottom[1]) throw new Error('world.rope: the fixed point anchorB (y = ' + top[1] + ') must be above the point it holds, anchorA (y = ' + bottom[1] + ')');
+  }
   const id = __MOD + ':j' + (++__jid);
   __ops.push({
     op: 'joint', id, kind, a, b: b || null,

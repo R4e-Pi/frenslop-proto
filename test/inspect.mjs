@@ -20,7 +20,12 @@ mod.code.split('\n').forEach((l, i) => console.log(String(i + 1).padStart(3), l)
 
 // 1. what the code asked for (raw ops from the sandbox)
 const sb = new ModSandbox('inspect', { here: mod.here, author: mod.author });
-const ops = sb.load(mod.code);
+let ops;
+try { ops = sb.load(mod.code); } catch (e) {
+  console.log(`\n=== rejected ===\nThis code no longer loads, so the model would be asked to fix it:\n  ${e.message}`);
+  sb.dispose();
+  process.exit(0);
+}
 sb.dispose();
 const notes = [];
 const spawns = new Map();

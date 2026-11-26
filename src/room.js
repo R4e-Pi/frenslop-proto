@@ -520,6 +520,8 @@ export class Room {
     console.warn(`[${this.id}] physics server stopped — falling back to simple physics`);
     this.physics = createPhysics.simple();
     this.physics.setGravity(this.world.gravity);
+    this.joints.clear();
+    this.#broadcastRopes();
     for (const e of this.entities.values()) if (e.physics !== 'static' || e.solid) this.physics.addEntity(e, e.physics);
   }
 
@@ -561,6 +563,8 @@ export class Room {
   #tell(c, s) { this.#send(c, { t: 'msg', from: null, text: s, sys: true }); }
   #send(c, m) { if (c.ws.readyState === 1) c.ws.send(JSON.stringify(m)); }
   #broadcast(m) { const s = JSON.stringify(m); for (const c of this.clients.values()) if (c.ws.readyState === 1) c.ws.send(s); }
+
+  busy() { return [...this.mods.values()].some(m => m.status === 'building'); }
 
   close() { clearInterval(this.timer); this.physics.close(); for (const m of this.mods.values()) m.sandbox?.dispose(); }
 }

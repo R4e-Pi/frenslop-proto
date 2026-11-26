@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Room } from '../src/room.js';
-const code = `const b = world.spawn({ name: 'box', position: here }); world.onTick((dt, t) => world.rotate(b, [0, t, 0]));`;
+const code = `const b = world.spawn({ name: 'box', position: [here[0], 0.5, here[2]] }); world.onTick((dt, t) => world.rotate(b, [0, t, 0]));`;
 const slowGenerate = async (prompt, ctx, tryInstall) => {
   await new Promise(r => setTimeout(r, 400)); // ~8 ticks pass while "building"
   const err = tryInstall(code);

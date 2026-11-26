@@ -69,11 +69,18 @@ What it simulates:
 - Shapes match the visuals: boxes, spheres, capsules, convex hulls for cylinders, cones and ellipsoids,
   and tori as rings of capsules, so hoops stay open.
 
+**Mistakes become feedback.** The sandbox rejects code that can't work physically, and the error goes back to
+the model for its retry: building more than 10 cm underground, a joint pinned to the world without saying where
+(`anchorB` for a rope, `anchor` for a hinge), or a rope hanging from a point below what it holds.
+
+**Inspect a saved mod:** `node test/inspect.mjs <room> [part of the prompt]` prints the model's code, what it
+spawned, its joints, 3 s of simulated motion, and findings (for example "nothing holds it, so it just falls").
+
 `test/physics.test.mjs` checks mods against textbook results:
 
 | check | measured | theory |
 |---|---|---|
-| free fall from 5 m | 1.05 s | √(2h/g) = 1.01 s (one tick of latency) |
+| free fall from 5 m | 1.009 s | √(2h/g) = 1.010 s |
 | steel ball rebound (e = 0.3) from 5 m | 0.44 m | e²h = 0.45 m |
 | rubber ball rebound (e = 0.8) from 2 m | 1.26 m | e²h = 1.28 m |
 | 10 N·s impulse on 2 kg | 4.93 m/s | J/m = 5.00 m/s |
@@ -119,6 +126,8 @@ Shapes: box, sphere, cylinder, cone, torus, capsule. Each is a unit shape scaled
 - Generated code never runs in the browser or in Node. It runs only in QuickJS, with no `process`, `require`, network or filesystem, plus memory, stack and time limits.
 - Mods can only *ask* for things through ops. The room clamps every value: positions, sizes, colors, part counts, entities per mod/room, dynamic bodies, and items.
 - A mod can only move or remove entities it created itself.
+- At most `MAX_ROOMS` rooms (default 12) can be open at once, since each runs a physics process. Rooms with nobody in
+  them close after `ROOM_IDLE_MINUTES` (default 10); their mods are saved and come back when someone opens the URL.
 - There's no auth or per-user rate limiting beyond "one building mod per player". Keep it on your LAN or tailnet. Don't put it on the open internet as is.
 
 ## Files

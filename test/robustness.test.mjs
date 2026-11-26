@@ -19,7 +19,7 @@ check('fence: export keyword kept code', cleanModCode('```js\nexport const g = 2
 
 // 2. a mod removed while the model is still writing must not install afterwards
 {
-  const code = `world.spawn({ name: 'late box', position: here });`;
+  const code = `world.spawn({ name: 'late box', position: [here[0], 0.5, here[2]] });`;
   const room = new Room('rmtest', {
     dataDir: tmpDir(),
     generate: async (p, ctx, tryInstall) => { await sleep(300); const e = tryInstall(code); if (e) throw new Error(e); return code; },
@@ -37,7 +37,7 @@ check('fence: export keyword kept code', cleanModCode('```js\nexport const g = 2
 
 // 3. rotations wrap instead of hitting a clamp (spinning mods froze after ~80 min)
 {
-  const code = `const b = world.spawn({ name: 'spinner', position: here }); world.rotate(b, [0, 10000.5, 0]);`;
+  const code = `const b = world.spawn({ name: 'spinner', position: [here[0], 0.5, here[2]] }); world.rotate(b, [0, 10000.5, 0]);`;
   const room = new Room('rottest', { dataDir: tmpDir(), generate: async (p, ctx, t) => { const e = t(code); if (e) throw new Error(e); return code; } });
   const c = room.join(fakeWs(), 'tester');
   await room.requestMod(c, 'a spinner');
@@ -69,6 +69,22 @@ check('fence: export keyword kept code', cleanModCode('```js\nexport const g = 2
   check('prompt + reply budget fit the context', promptTokens + calls[0].options.num_predict <= calls[0].options.num_ctx,
     `${promptTokens} + ${calls[0].options.num_predict} ≤ ${calls[0].options.num_ctx}`);
   room.close();
+}
+
+// 5. mistakes become errors the model sees on its retry (seen live: a pendulum built underground,
+//    tied to the ground by a rope with no fixed point)
+{
+  const { ModSandbox } = await import('../src/sandbox.js');
+  const run = code => { const sb = new ModSandbox('v', { here: [0, 0, 0], author: {} }); try { sb.load(code); return null; } catch (e) { return e.message; } finally { sb.dispose(); } };
+  const bob = `const b = world.spawn({ name: 'bob', physics: 'dynamic', position: [0, 2, 0], parts: [{ shape: 'sphere', size: [0.3, 0.3, 0.3] }] });`;
+  check('spawning 0.2 m underground is an error', /below the ground/.test(run(`world.spawn({ name: 'stub', position: [0, 0, 0], parts: [{ size: [1, 0.4, 1] }] });`) || ''));
+  check('resting on the ground is fine', run(`world.spawn({ name: 'block', position: [0, 0, 0], parts: [{ size: [1, 0.4, 1], offset: [0, 0.2, 0] }] });`) === null);
+  check('rotated builds are not judged', run(`world.spawn({ name: 'tilted', position: [0, 0, 0], rotation: [0.5, 0, 0], parts: [{ size: [1, 2, 1] }] });`) === null);
+  check('rope to the world without anchorB is an error', /give anchorB/.test(run(bob + `world.rope(b, null, { anchorA: [0, 2, 0] });`) || ''));
+  check('rope hanging from below is an error', /must be above/.test(run(bob + `world.rope(b, null, { anchorA: [0, 2, 0], anchorB: [0, 1, 0] });`) || ''));
+  check('rope hanging from above is fine', run(bob + `world.rope(b, null, { anchorA: [0, 2, 0], anchorB: [0, 4, 0] });`) === null);
+  check('hinge to the world without anchor is an error', /give anchor/.test(run(bob + `world.hinge(b, null, { axis: [0, 0, 1] });`) || ''));
+  check('joint on a made-up id is an error', /returned by world.spawn/.test(run(`world.rope('nope', null, { anchorB: [0, 4, 0] });`) || ''));
 }
 
 process.exit(fail ? 1 : 0);

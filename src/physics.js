@@ -117,6 +117,7 @@ export class Box3DPhysics {
     this.dead = false;
     this.frame = null;
     this.proc = spawn(PHYSICS_BIN, [], { stdio: ['pipe', 'pipe', 'inherit'] });
+    this.proc.on('error', e => { console.error(`[physics] can't run ${PHYSICS_BIN}: ${e.message} — using simple physics (rebuild with: npm run build:physics)`); this.dead = true; this.#finish(null); });
     this.proc.on('exit', code => { if (!this.closed) console.error(`[physics] box3d server exited (${code})`); this.dead = true; this.#finish(null); });
     this.proc.stdin.on('error', () => { this.dead = true; });
     const rl = readline.createInterface({ input: this.proc.stdout });
