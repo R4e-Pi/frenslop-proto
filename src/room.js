@@ -4,6 +4,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ModSandbox } from './sandbox.js';
+import { createPhysics, quatToEuler, eulerToQuat, rotate, MATERIALS } from './physics.js';
+
+// a world point expressed in an entity's local frame (so clients can draw ropes that follow it)
+const toLocal = (e, p) => { const q = e.quat || eulerToQuat(e.rotation); return rotate([-q[0], -q[1], -q[2], q[3]], [p[0] - e.position[0], p[1] - e.position[1], p[2] - e.position[2]]); };
 
 const TICK_HZ = 20;
 const LIMITS = {
@@ -11,6 +15,7 @@ const LIMITS = {
   modsPerRoom: 30,
   entitiesPerMod: 300,
   dynamicPerMod: 40,
+  jointsPerMod: 100,
   entitiesPerRoom: 2000,
   partsPerEntity: 80,
   itemsPerRoom: 8,
@@ -66,6 +71,11 @@ export class Room {
     this.dirty = new Set();
     this.seq = 0;
     this.t = 0;
+    this.joints = new Map();      // joint id -> { mod }
+    this.hitHandlers = new Map(); // entity id -> [{ mod, h }]
+    this.physics = createPhysics();
+    this.physics.setGravity(this.world.gravity);
+    this.stepping = false;
     this.#restore();
     this.timer = setInterval(() => this.#tick(1 / TICK_HZ), 1000 / TICK_HZ);
   }
@@ -78,7 +88,7 @@ export class Room {
     this.#send(client, {
       t: 'hello', you: { id, name: client.name }, room: this.id, world: this.world,
       entities: [...this.entities.values()].map(e => this.#publicEntity(e)),
-      items: this.#publicItems(), mods: this.#publicMods(),
+      items: this.#publicItems(), mods: this.#publicMods(), ropes: this.#ropes(),
     });
     this.#system(`${client.name} joined`);
     return client;
@@ -86,6 +96,7 @@ export class Room {
 
   leave(client) {
     this.clients.delete(client.id);
+    this.physics.removePlayer(client.id);
     for (const e of this.entities.values()) if (e.driver === client.id) e.driver = null;
     this.#broadcast({ t: 'gone', id: client.id });
     this.#system(`${client.name} left`);
@@ -115,6 +126,7 @@ export class Room {
         if (!e || e.driver !== client.id) break;
         e.position = vec(msg.p, e.position, -LIMITS.worldRadius, LIMITS.worldRadius);
         e.rotation = rot(msg.r, e.rotation);
+        this.physics.moveEntity(e, 1 / TICK_HZ);
         this.dirty.add(e.id);
         break;
       }
@@ -199,7 +211,14 @@ export class Room {
   }
 
   #teardown(mod) {
+    let ropes = false;
+    for (const [jid, j] of [...this.joints]) if (j.mod === mod.id) { ropes ||= !!j.rope; this.physics.removeJoint(jid); this.joints.delete(jid); }
+    if (ropes) this.#broadcastRopes();
     for (const e of [...this.entities.values()]) if (e.mod === mod.id) this.#removeEntity(e.id);
+    for (const [eid, hs] of [...this.hitHandlers]) {
+      const keep = hs.filter(x => x.mod !== mod.id);
+      if (keep.length) this.hitHandlers.set(eid, keep); else this.hitHandlers.delete(eid);
+    }
     const before = this.items.length;
     this.items = this.items.filter(i => i.mod !== mod.id);
     if (this.items.length !== before) this.#broadcast({ t: 'items', items: this.#publicItems() });
@@ -226,6 +245,7 @@ export class Room {
         const mine = [...this.entities.values()].filter(e => e.mod === mod.id);
         if (mine.length >= LIMITS.entitiesPerMod) return;
         const dynamic = o.physics === 'dynamic';
+        const kinematic = o.physics === 'kinematic';
         if (dynamic) {
           const dyn = mine.filter(e => e.physics === 'dynamic');
           if (dyn.length >= LIMITS.dynamicPerMod) this.#removeEntity(dyn[0].id);
@@ -237,12 +257,20 @@ export class Room {
           position: vec(o.position, [0, 0, 0], -LIMITS.worldRadius, LIMITS.worldRadius),
           rotation: rot(o.rotation, [0, 0, 0]),
           solid: !!o.solid,
-          physics: dynamic ? 'dynamic' : 'static',
+          physics: dynamic ? 'dynamic' : kinematic ? 'kinematic' : 'static',
           velocity: vec(o.velocity, [0, 0, 0], -80, 80),
+          spin: vec(o.spin, [0, 0, 0], -50, 50),
+          material: MATERIALS[o.material] ? o.material : null,
+          mass: clamp(num(o.mass, 0), 0, 1e5),
+          friction: o.friction == null ? null : clamp(num(o.friction, 0.5), 0, 2),
+          bounciness: o.bounciness == null ? null : clamp(num(o.bounciness, 0.3), 0, 1),
+          bullet: !!o.bullet,
           prompt: null, interactH: null, vehicle: null, driver: null,
         };
         e.shape = halfHeight(e.parts);
         this.entities.set(e.id, e);
+        // dynamic and kinematic things always collide; static ones only when solid
+        if (dynamic || kinematic || e.solid) this.physics.addEntity(e, e.physics);
         this.#broadcast({ t: 'ent+', e: this.#publicEntity(e) });
         break;
       }
@@ -250,10 +278,58 @@ export class Room {
         if (!owns) return;
         if (o.position) ent.position = vec(o.position, ent.position, -LIMITS.worldRadius, LIMITS.worldRadius);
         if (o.rotation) ent.rotation = rot(o.rotation, ent.rotation);
+        this.physics.moveEntity(ent, 1 / TICK_HZ);
         this.dirty.add(ent.id);
         break;
       case 'push':
-        if (ent && ent.physics === 'dynamic') ent.velocity = vec(o.velocity, [0, 0, 0], -80, 80);
+        if (ent && ent.physics === 'dynamic') { ent.velocity = vec(o.velocity, [0, 0, 0], -80, 80); this.physics.setVelocity(ent.id, ent.velocity); }
+        break;
+      case 'impulse': // N·s
+        if (ent) this.physics.impulse(ent.id, vec(o.value, [0, 0, 0], -1e5, 1e5));
+        break;
+      case 'force': // N, applied during the next physics step
+        if (ent) this.physics.force(ent.id, vec(o.value, [0, 0, 0], -1e6, 1e6));
+        break;
+      case 'spin': // rad/s
+        if (ent) this.physics.setSpin(ent.id, vec(o.value, [0, 0, 0], -50, 50));
+        break;
+      case 'joint': {
+        const a = this.entities.get(o.a), b = o.b ? this.entities.get(o.b) : null;
+        if (!a || a.mod !== mod.id || (o.b && !b)) return;
+        if ([...this.joints.values()].filter(j => j.mod === mod.id).length >= LIMITS.jointsPerMod) return;
+        const W = LIMITS.worldRadius;
+        const ok = this.physics.addJoint(o.id, String(o.kind), a.id, b && this.physics.has(b.id) ? b.id : null, {
+          anchor: vec(o.anchor, a.position, -W, W),
+          anchorA: o.anchorA ? vec(o.anchorA, a.position, -W, W) : null,
+          anchorB: o.anchorB ? vec(o.anchorB, a.position, -W, W) : null,
+          axis: vec(o.axis, [0, 1, 0], -1, 1),
+          limits: Array.isArray(o.limits) ? [clamp(num(o.limits[0], 0), -100, 100), clamp(num(o.limits[1], 0), -100, 100)] : null,
+          motorSpeed: clamp(num(o.motorSpeed, 0), -100, 100),
+          maxTorque: clamp(num(o.maxTorque, 0), 0, 1e7), maxForce: clamp(num(o.maxForce, 0), 0, 1e7),
+          length: clamp(num(o.length, 0), 0, 200), spring: !!o.spring,
+          stiffness: clamp(num(o.stiffness, 2), 0, 60), damping: clamp(num(o.damping, 0.3), 0, 10),
+        });
+        if (ok) {
+          // ropes are drawn by clients as a cable between their two attachment points
+          const opts = { anchorA: o.anchorA || o.anchor || a.position, anchorB: o.anchorB || o.anchor || a.position };
+          const rope = o.kind === 'rope'
+            ? { id: o.id, a: a.id, la: toLocal(a, vec(opts.anchorA, a.position, -W, W)), b: b && this.physics.has(b.id) ? b.id : null,
+                lb: b && this.physics.has(b.id) ? toLocal(b, vec(opts.anchorB, b.position, -W, W)) : vec(opts.anchorB, a.position, -W, W) }
+            : null;
+          this.joints.set(o.id, { mod: mod.id, rope });
+          if (rope) this.#broadcastRopes();
+        }
+        break;
+      }
+      case 'unjoint':
+        if (this.joints.get(o.id)?.mod === mod.id) {
+          const had = this.joints.get(o.id).rope;
+          this.physics.removeJoint(o.id); this.joints.delete(o.id);
+          if (had) this.#broadcastRopes();
+        }
+        break;
+      case 'hit':
+        if (ent && o.h) this.hitHandlers.set(ent.id, [...(this.hitHandlers.get(ent.id) || []), { mod: mod.id, h: o.h }]);
         break;
       case 'remove':
         if (owns) this.#removeEntity(ent.id);
@@ -311,6 +387,8 @@ export class Room {
 
   #removeEntity(id) {
     if (!this.entities.delete(id)) return;
+    this.physics.removeEntity(id);
+    this.hitHandlers.delete(id);
     this.dirty.delete(id);
     this.#broadcast({ t: 'ent-', id });
   }
@@ -319,6 +397,7 @@ export class Room {
     const w = { ...DEFAULT_WORLD };
     for (const m of this.mods.values()) Object.assign(w, m.worldSet || {});
     this.world = w;
+    this.physics.setGravity(w.gravity);
     this.#broadcast({ t: 'world', world: w });
   }
 
@@ -330,7 +409,13 @@ export class Room {
   #callMod(modId, h, args) {
     const mod = this.mods.get(modId);
     if (!mod?.sandbox || mod.status !== 'live') return;
-    const ops = mod.sandbox.call(h, args, this.#playersForMods());
+    let sync = null;
+    if (mod.sync?.size) {
+      sync = [];
+      for (const id of mod.sync) { const e = this.entities.get(id); if (e) sync.push([id, e.position, e.rotation, e.velocity]); }
+      mod.sync.clear();
+    }
+    const ops = mod.sandbox.call(h, args, this.#playersForMods(), sync);
     this.#apply(mod, ops);
     if (mod.sandbox.errors > LIMITS.modErrors) {
       mod.status = 'crashed';
@@ -385,40 +470,57 @@ export class Room {
       }
     }
 
-    // very small physics for dynamic bodies: gravity, ground bounce, player kicks
-    const g = this.world.gravity;
-    for (const e of this.entities.values()) {
-      if (e.physics !== 'dynamic') continue;
-      const v = e.velocity;
-      v[1] -= g * dt;
-      for (const c of this.clients.values()) {
-        const dx = e.position[0] - c.position[0], dz = e.position[2] - c.position[2];
-        const dy = e.position[1] - (c.position[1] + 0.8);
-        const d = Math.hypot(dx, dz);
-        if (d < e.shape.radius + 0.45 && Math.abs(dy) < e.shape.radius + 1) {
-          const n = d || 1;
-          v[0] = (dx / n) * 7; v[2] = (dz / n) * 7; v[1] = Math.max(v[1], 4);
-        }
-      }
-      for (let i = 0; i < 3; i++) e.position[i] += v[i] * dt;
-      const floor = -e.shape.bottom;
-      if (e.position[1] < floor) {
-        e.position[1] = floor;
-        v[1] = Math.abs(v[1]) > 1 ? -v[1] * 0.55 : 0;
-        v[0] *= 0.9; v[2] *= 0.9;
-      }
-      if (Math.abs(e.position[0]) > LIMITS.worldRadius || Math.abs(e.position[2]) > LIMITS.worldRadius) { this.#removeEntity(e.id); continue; }
-      if (Math.abs(v[0]) + Math.abs(v[1]) + Math.abs(v[2]) > 0.01) this.dirty.add(e.id);
+    // physics: players are kinematic capsules; the world steps at 60 Hz in the background.
+    // If the previous step is still running (slow Pi), skip rather than queue.
+    if (this.physics.dead) this.#fallbackPhysics();
+    for (const c of this.clients.values()) this.physics.setPlayer(c.id, c.position, dt);
+    if (!this.stepping) {
+      this.stepping = true;
+      this.physics.step(dt).then(r => this.#applyPhysics(r)).catch(e => console.error(`[${this.id}] physics:`, e))
+        .finally(() => { this.stepping = false; });
     }
 
     const ents = [];
     for (const id of this.dirty) {
       const e = this.entities.get(id);
-      if (e) ents.push([id, e.position.map(r3), e.rotation.map(r3)]);
+      if (e) ents.push(e.quat ? [id, e.position.map(r3), e.rotation.map(r3), e.quat.map(r4)] : [id, e.position.map(r3), e.rotation.map(r3)]);
     }
     this.dirty.clear();
     const players = [...this.clients.values()].map(c => [c.id, c.name, c.position.map(r3), r3(c.ry)]);
     this.#broadcast({ t: 'tick', ents, players });
+  }
+
+  #applyPhysics(r) {
+    const W = LIMITS.worldRadius;
+    for (const [id, p, q, v] of r.moved) {
+      const e = this.entities.get(id);
+      if (!e || e.driver) continue;
+      if (p[1] < -60 || Math.abs(p[0]) > W || Math.abs(p[2]) > W) { this.#removeEntity(id); continue; } // fell out of the world
+      e.position = p; e.quat = q; e.velocity = v;
+      e.rotation = quatToEuler(q).map(wrapAngle);
+      this.dirty.add(id);
+      const mod = this.mods.get(e.mod);
+      if (mod) (mod.sync ??= new Set()).add(id);
+    }
+    // impacts: one callback per pair per frame, at most 32 per frame (a collapsing pile can't flood mods)
+    const seen = new Set();
+    for (const [a, b, speed, point] of r.hits) {
+      const key = a < b ? a + '|' + b : b + '|' + a;
+      if (seen.has(key) || seen.size >= 32) continue;
+      seen.add(key);
+      for (const [self, other] of [[a, b], [b, a]]) {
+        const hs = this.hitHandlers.get(self);
+        if (hs) for (const { mod, h } of hs) this.#callMod(mod, h, [other, r3(speed), point.map(r3)]);
+      }
+    }
+  }
+
+  // the Box3D process died: rebuild this room's bodies in the simple integrator
+  #fallbackPhysics() {
+    console.warn(`[${this.id}] physics server stopped — falling back to simple physics`);
+    this.physics = createPhysics.simple();
+    this.physics.setGravity(this.world.gravity);
+    for (const e of this.entities.values()) if (e.physics !== 'static' || e.solid) this.physics.addEntity(e, e.physics);
   }
 
   // ---------- persistence ----------
@@ -448,6 +550,8 @@ export class Room {
   #publicEntity(e) {
     return { id: e.id, mod: e.mod, name: e.name, parts: e.parts, position: e.position, rotation: e.rotation, solid: e.solid, physics: e.physics, prompt: e.prompt, vehicle: e.vehicle };
   }
+  #ropes() { return [...this.joints.values()].filter(j => j.rope && this.entities.has(j.rope.a)).map(j => j.rope); }
+  #broadcastRopes() { this.#broadcast({ t: 'ropes', ropes: this.#ropes() }); }
   #publicItems() { return this.items.map(({ key, name, icon }) => ({ key, name, icon })); }
   #publicMods() {
     return [...this.mods.values()].map(m => ({ id: m.id, prompt: m.prompt, author: m.author.name, status: m.status, error: m.error, ms: m.ms }));
@@ -458,7 +562,8 @@ export class Room {
   #send(c, m) { if (c.ws.readyState === 1) c.ws.send(JSON.stringify(m)); }
   #broadcast(m) { const s = JSON.stringify(m); for (const c of this.clients.values()) if (c.ws.readyState === 1) c.ws.send(s); }
 
-  close() { clearInterval(this.timer); for (const m of this.mods.values()) m.sandbox?.dispose(); }
+  close() { clearInterval(this.timer); this.physics.close(); for (const m of this.mods.values()) m.sandbox?.dispose(); }
 }
 
 const r3 = v => Math.round(v * 1000) / 1000;
+const r4 = v => Math.round(v * 10000) / 10000;

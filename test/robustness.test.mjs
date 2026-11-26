@@ -64,7 +64,10 @@ check('fence: export keyword kept code', cleanModCode('```js\nexport const g = 2
   check('retry built the mod', mod?.status === 'live', `status ${mod?.status}: ${mod?.error}`);
   check('retry is a fresh 2-message chat', calls[1]?.messages.length === 2, `${calls[1]?.messages.length} messages`);
   check('retry carries the error, not the failed reply', /previous attempt failed/.test(calls[1]?.messages[1].content) && !/spawnn\(\{\}\);\n/.test(calls[1]?.messages[1].content.split('failed with:')[0]));
-  check('reply length capped to fit the context', calls[0]?.options.num_predict <= calls[0]?.options.num_ctx * 0.4, JSON.stringify(calls[0]?.options));
+  // prompt (estimated conservatively at 3.2 chars/token) + reply budget must fit the context
+  const promptTokens = Math.ceil(calls[0].messages.reduce((n, m) => n + m.content.length, 0) / 3.2);
+  check('prompt + reply budget fit the context', promptTokens + calls[0].options.num_predict <= calls[0].options.num_ctx,
+    `${promptTokens} + ${calls[0].options.num_predict} ≤ ${calls[0].options.num_ctx}`);
   room.close();
 }
 

@@ -42,17 +42,38 @@ const world = {
       position: __v(o.position, [0, 0, 0]),
       rotation: __v(o.rotation, [0, 0, 0]),
       solid: o.solid !== false,
-      physics: o.physics === 'dynamic' ? 'dynamic' : 'static',
+      physics: o.physics === 'dynamic' || o.physics === 'kinematic' ? o.physics : 'static',
       velocity: __v(o.velocity, [0, 0, 0]),
+      spin: __v(o.spin, [0, 0, 0]),
+      material: o.material ? String(o.material) : null,
+      mass: Number(o.mass) || 0,
+      friction: o.friction === undefined ? null : Number(o.friction),
+      bounciness: o.bounciness === undefined ? null : Number(o.bounciness),
+      bullet: !!o.bullet,
     };
-    __ents[id] = { position: e.position.slice(), rotation: e.rotation.slice() };
+    __ents[id] = { position: e.position.slice(), rotation: e.rotation.slice(), velocity: e.velocity.slice() };
     __ops.push(e);
     return id;
   },
-  get(id) { const e = __ents[id]; return e ? { position: e.position.slice(), rotation: e.rotation.slice() } : null; },
+  // live state: dynamic bodies report their simulated position/rotation/velocity
+  get(id) { const e = __ents[id]; return e ? { position: e.position.slice(), rotation: e.rotation.slice(), velocity: (e.velocity || [0, 0, 0]).slice() } : null; },
   move(id, position) { if (!__ents[id]) return; __ents[id].position = __v(position, __ents[id].position); __ops.push({ op: 'update', id, position: __ents[id].position }); },
   rotate(id, rotation) { if (!__ents[id]) return; __ents[id].rotation = __v(rotation, __ents[id].rotation); __ops.push({ op: 'update', id, rotation: __ents[id].rotation }); },
   push(id, velocity) { __ops.push({ op: 'push', id, velocity: __v(velocity, [0, 0, 0]) }); },
+  // physics (SI units): impulse N·s (instant kick), force N (this tick; call from onTick to keep
+  // pushing), spin rad/s (angular velocity)
+  impulse(id, j) { __ops.push({ op: 'impulse', id, value: __v(j, [0, 0, 0]) }); },
+  force(id, F) { __ops.push({ op: 'force', id, value: __v(F, [0, 0, 0]) }); },
+  spin(id, w) { __ops.push({ op: 'spin', id, value: __v(w, [0, 0, 0]) }); },
+  // joints connect two bodies at a world-space anchor; b = null attaches a to the fixed world
+  hinge(a, b, o) { return __joint('hinge', a, b, o); },
+  slider(a, b, o) { return __joint('slider', a, b, o); },
+  ball(a, b, o) { return __joint('ball', a, b, o); },
+  weld(a, b, o) { return __joint('weld', a, b, o); },
+  rope(a, b, o) { return __joint('rope', a, b, o); },
+  unjoin(jid) { __ops.push({ op: 'unjoint', id: jid }); },
+  // impacts: fn(otherId, speed m/s, point) — otherId is an entity id, a player id or 'ground'
+  onHit(id, fn) { __ops.push({ op: 'hit', id, h: __h(fn) }); },
   remove(id) { delete __ents[id]; __ops.push({ op: 'remove', id }); },
   setGravity(g) { __ops.push({ op: 'world', key: 'gravity', value: Number(g) }); },
   setSky(color) { __ops.push({ op: 'world', key: 'sky', value: String(color) }); },
@@ -61,6 +82,22 @@ const world = {
   onEnter(id, radius, fn) { __ops.push({ op: 'enter', id, radius: Number(radius) || 2, h: __h(fn) }); },
   broadcast(text) { __ops.push({ op: 'msg', to: null, text: String(text) }); },
 };
+
+let __jid = 0;
+function __joint(kind, a, b, o) {
+  o = o || {};
+  const id = __MOD + ':j' + (++__jid);
+  __ops.push({
+    op: 'joint', id, kind, a, b: b || null,
+    anchor: __v(o.anchor, (__ents[a] && __ents[a].position) || [0, 0, 0]),
+    anchorA: o.anchorA ? __v(o.anchorA, [0, 0, 0]) : null, anchorB: o.anchorB ? __v(o.anchorB, [0, 0, 0]) : null,
+    axis: __v(o.axis, kind === 'slider' ? [1, 0, 0] : [0, 1, 0]),
+    limits: Array.isArray(o.limits) ? [Number(o.limits[0]) || 0, Number(o.limits[1]) || 0] : null,
+    motorSpeed: Number(o.motorSpeed) || 0, maxTorque: Number(o.maxTorque) || 0, maxForce: Number(o.maxForce) || 0,
+    length: Number(o.length) || 0, spring: !!o.spring, stiffness: Number(o.stiffness) || 0, damping: o.damping === undefined ? 0.3 : Number(o.damping),
+  });
+  return id;
+}
 
 function interact(id, o) {
   o = o || {};
@@ -90,8 +127,10 @@ const players = {
 
 const console = { log(...a) { __ops.push({ op: 'log', text: a.map(String).join(' ') }); } };
 
-function __call(h, args, ps) {
+function __call(h, args, ps, sync) {
   __players = ps || [];
+  // fresh simulated state for this mod's moving bodies: [id, position, rotation, velocity]
+  if (sync) for (const [id, p, r, v] of sync) if (__ents[id]) { __ents[id].position = p; __ents[id].rotation = r; __ents[id].velocity = v; }
   const f = __handlers[h];
   if (f) f(...args);
 }
@@ -146,10 +185,10 @@ export class ModSandbox {
   }
 
   // Call a registered handler. Errors are counted, never thrown to the room.
-  call(h, args, players) {
+  call(h, args, players, sync = null) {
     if (this.disposed) return [];
     try {
-      this.#eval(`__call(${JSON.stringify(h)}, ${JSON.stringify(args)}, ${JSON.stringify(players)})`, CALL_MS);
+      this.#eval(`__call(${JSON.stringify(h)}, ${JSON.stringify(args)}, ${JSON.stringify(players)}, ${JSON.stringify(sync)})`, CALL_MS);
     } catch (e) {
       this.errors++;
       this.lastError = e.message;

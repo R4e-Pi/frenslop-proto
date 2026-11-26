@@ -43,6 +43,43 @@ No GPU handy? Run `npm run mock` to use canned mods so you can test the game its
 
 Rooms are just URLs: `/r/anything` creates a room. Share the link with friends on your LAN, or over your tailnet with `tailscale serve`. Mods are saved to `data/rooms/<room>.json` and reloaded on restart.
 
+## Physics: Box3D
+
+Rooms run real rigid-body physics with **Box3D v0.1.0** (Erin Catto, the Box2D author; MIT), the same
+engine as box3d-net-demo. It uses the same split too: `physics/physics_server` is a small C program
+that owns the simulation, and Node drives it over a pipe, with one world per room at 60 Hz and 4 substeps.
+
+```bash
+npm run build:physics                    # clones Box3D v0.1.0 into physics/vendor/, builds, compiles the server
+BOX3D_DIR=~/box3d npm run build:physics  # or reuse an existing Box3D checkout
+```
+
+At startup the server prints `physics: Box3D v0.1.0 (physics/physics_server)`. If the program isn't built
+(or `PHYSICS=simple`), rooms fall back to the original tiny integrator: gravity, bounces and kicks, but
+no joints or object-vs-object collisions.
+
+What it simulates:
+- **Bodies:** solid things are static colliders; `physics:'dynamic'` things are simulated, with mass from
+  their real volume and **material** (`wood steel stone concrete rubber ice plastic glass gold foam inflatable`)
+  or an explicit `mass` in kg. Things a mod moves become kinematic and push what they touch.
+- **Players** are kinematic capsules, so walking into a ball kicks it.
+- **Forces** in SI units: `world.impulse` (N·s), `world.force` (N), `world.spin` (rad/s).
+- **Joints:** `world.hinge`, `rope`, `ball`, `weld` and `slider`, with motors and limits. Ropes are drawn as cables.
+- **Impacts:** `world.onHit(id, (other, speed, point) => …)`, with impact speed in m/s.
+- Shapes match the visuals: boxes, spheres, capsules, convex hulls for cylinders, cones and ellipsoids,
+  and tori as rings of capsules, so hoops stay open.
+
+`test/physics.test.mjs` checks mods against textbook results:
+
+| check | measured | theory |
+|---|---|---|
+| free fall from 5 m | 1.05 s | √(2h/g) = 1.01 s (one tick of latency) |
+| steel ball rebound (e = 0.3) from 5 m | 0.44 m | e²h = 0.45 m |
+| rubber ball rebound (e = 0.8) from 2 m | 1.26 m | e²h = 1.28 m |
+| 10 N·s impulse on 2 kg | 4.93 m/s | J/m = 5.00 m/s |
+| pendulum, L = 2 m | 2.85 s | 2π√(L/g) = 2.84 s |
+| impact speed from 3.2 m | 8.00 m/s | √(2gh) = 7.92 m/s |
+
 ## Theme
 
 The look is the **Bitmap district** from Bitmap Parcel World: asphalt roads, orange parcels packed
@@ -89,7 +126,9 @@ Shapes: box, sphere, cylinder, cone, torus, capsule. Each is a unit shape scaled
 | file | what |
 |---|---|
 | `server.js` | HTTP (static + `/r/:room`) and WebSocket server, `.env` loader |
-| `src/room.js` | room state, op validation, tick loop (20 Hz), tiny physics for dynamic bodies, persistence |
+| `src/room.js` | room state, op validation, tick loop (20 Hz), physics integration, persistence |
+| `src/physics.js` | Box3D driver (shapes, materials, joints, players), plus the simple fallback |
+| `physics/` | `physics_server.c` (Box3D world over a line protocol) and `build.sh` |
 | `src/sandbox.js` | QuickJS runtime per mod, the mod API prelude |
 | `src/llm.js` | Ollama provider with error-feedback retries, plus the mock provider |
 | `src/prompt.js` | the system prompt the model sees |

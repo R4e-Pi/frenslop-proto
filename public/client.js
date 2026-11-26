@@ -179,7 +179,7 @@ function addEntity(e) {
   if (old) removeEntity(e.id);
   const group = buildGroup(e);
   scene.add(group);
-  const rec = { data: e, group, tp: group.position.clone(), tr: group.rotation.clone(), delta: new THREE.Vector3(), boxes: [] };
+  const rec = { data: e, group, tp: group.position.clone(), tr: group.rotation.clone(), tq: null, delta: new THREE.Vector3(), boxes: [] };
   computeBoxes(rec);
   ents.set(e.id, rec);
 }
@@ -200,12 +200,51 @@ function updateEntities(dt) {
     const g = rec.group;
     tmpV.copy(g.position);
     g.position.lerp(rec.tp, k);
-    // angles arrive wrapped to (-π, π], so turn the short way around
-    const ax = angleDiff(rec.tr.x, g.rotation.x), ay = angleDiff(rec.tr.y, g.rotation.y), az = angleDiff(rec.tr.z, g.rotation.z);
-    const dr = Math.abs(ax) + Math.abs(ay) + Math.abs(az);
-    if (dr > 1e-4) g.rotation.set(g.rotation.x + ax * k, g.rotation.y + ay * k, g.rotation.z + az * k);
+    let dr = 0;
+    if (rec.tq) {
+      // physics bodies tumble freely: interpolate their orientation as a quaternion
+      dr = 1 - Math.abs(g.quaternion.dot(rec.tq));
+      if (dr > 1e-7) g.quaternion.slerp(rec.tq, k);
+    } else {
+      // angles arrive wrapped to (-π, π], so turn the short way around
+      const ax = angleDiff(rec.tr.x, g.rotation.x), ay = angleDiff(rec.tr.y, g.rotation.y), az = angleDiff(rec.tr.z, g.rotation.z);
+      dr = Math.abs(ax) + Math.abs(ay) + Math.abs(az);
+      if (dr > 1e-4) g.rotation.set(g.rotation.x + ax * k, g.rotation.y + ay * k, g.rotation.z + az * k);
+    }
     rec.delta.subVectors(g.position, tmpV);
     if (rec.boxes.length && (rec.delta.lengthSq() > 1e-10 || dr > 1e-4)) computeBoxes(rec);
+  }
+}
+
+// ---------------------------------------------------------------- ropes (rope joints)
+const ropes = new Map(); // id -> { data, mesh }
+const ropeGeo = new THREE.CylinderGeometry(0.035, 0.035, 1, 6);
+ropeGeo.translate(0, 0.5, 0);
+const ropeMat = new THREE.MeshStandardMaterial({ color: '#3a3a3e', roughness: 0.6, metalness: 0.4 });
+const UP = new THREE.Vector3(0, 1, 0), ra = new THREE.Vector3(), rb = new THREE.Vector3(), rd = new THREE.Vector3();
+function setRopes(list) {
+  for (const r of ropes.values()) scene.remove(r.mesh);
+  ropes.clear();
+  for (const data of list || []) {
+    const mesh = new THREE.Mesh(ropeGeo, ropeMat);
+    mesh.castShadow = true;
+    scene.add(mesh);
+    ropes.set(data.id, { data, mesh });
+  }
+}
+function updateRopes() {
+  for (const { data, mesh } of ropes.values()) {
+    const A = ents.get(data.a);
+    if (!A) { mesh.visible = false; continue; }
+    ra.fromArray(data.la).applyQuaternion(A.group.quaternion).add(A.group.position);
+    const B = data.b && ents.get(data.b);
+    if (B) rb.fromArray(data.lb).applyQuaternion(B.group.quaternion).add(B.group.position); else rb.fromArray(data.lb);
+    rd.subVectors(rb, ra);
+    const len = rd.length();
+    mesh.visible = len > 0.01;
+    mesh.position.copy(ra);
+    mesh.scale.set(1, len, 1);
+    mesh.quaternion.setFromUnitVectors(UP, rd.divideScalar(len || 1));
   }
 }
 
@@ -449,10 +488,12 @@ function onMessage(m) {
       applyWorld(m.world);
       setItems(m.items);
       renderMods(m.mods);
+      setRopes(m.ropes);
       setStatus(`room <b>${escapeHtml(m.room)}</b> · connected`);
       break;
     case 'ent+': addEntity(m.e); break;
     case 'ent-': removeEntity(m.id); break;
+    case 'ropes': setRopes(m.ropes); break;
     case 'world': applyWorld(m.world); break;
     case 'items': setItems(m.items); break;
     case 'mods': renderMods(m.mods); break;
@@ -463,11 +504,13 @@ function onMessage(m) {
     case 'unmount': if (drive?.id === m.id) endDrive(); break;
     case 'gone': { const o = others.get(m.id); if (o) { scene.remove(o.group); others.delete(m.id); } break; }
     case 'tick':
-      for (const [id, p, r] of m.ents) {
+      for (const [id, p, r, q] of m.ents) {
         const rec = ents.get(id);
         if (!rec || drive?.id === id) continue;
         rec.tp.fromArray(p);
         rec.tr.set(r[0], r[1], r[2]);
+        if (q) (rec.tq ??= new THREE.Quaternion()).set(q[0], q[1], q[2], q[3]);
+        else rec.tq = null;
       }
       for (const [id, name, p, ry] of m.players) {
         if (id === me.id) continue;
@@ -664,6 +707,7 @@ function frame() {
   sun.position.copy(me.pos).add(SUN_OFF);
   sun.target.position.copy(me.pos);
   updateTarget();
+  updateRopes();
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }

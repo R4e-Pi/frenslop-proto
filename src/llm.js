@@ -16,12 +16,18 @@ const cfg = {
   // Must match the server's OLLAMA_KEEP_ALIVE or each request resets the timer.
   keepAlive: process.env.OLLAMA_KEEP_ALIVE || '30m',
 };
-// leave room in the context for the ~1.5k-token system prompt
-cfg.numPredict = Number(process.env.OLLAMA_NUM_PREDICT || Math.min(2048, Math.floor(cfg.numCtx * 0.35)));
+// Reply budget: whatever the context has left after the prompt (estimated at ~3.2 chars per
+// token, on the safe side), capped by OLLAMA_NUM_PREDICT. Never lets the prompt get truncated.
+cfg.numPredictMax = Number(process.env.OLLAMA_NUM_PREDICT || 2048);
+export function replyBudget(promptChars) {
+  const promptTokens = Math.ceil(promptChars / 3.2);
+  return Math.max(384, Math.min(cfg.numPredictMax, cfg.numCtx - promptTokens - 64));
+}
 const keepAliveValue = v => (/^-?\d+$/.test(v) ? Number(v) : v);
 export const llmConfig = cfg;
 
 async function ollamaChat(messages) {
+  const numPredict = replyBudget(messages.reduce((n, m) => n + m.content.length, 0));
   const res = await fetch(`${cfg.url}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -31,7 +37,7 @@ async function ollamaChat(messages) {
       messages,
       stream: false,
       keep_alive: keepAliveValue(cfg.keepAlive),
-      options: { temperature: 0.4, num_ctx: cfg.numCtx, num_predict: cfg.numPredict },
+      options: { temperature: 0.4, num_ctx: cfg.numCtx, num_predict: numPredict },
     }),
   }).catch(e => { throw new Error(`can't reach Ollama at ${cfg.url} (${e.cause?.code || e.message})`); });
   if (!res.ok) throw new Error(`Ollama ${res.status}: ${(await res.text()).slice(0, 200)}`);

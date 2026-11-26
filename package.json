@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "mock": "LLM_PROVIDER=mock node server.js",
-    "test": "node test/sandbox.test.mjs > /dev/null && node test/mocks.test.mjs && node test/slow-model.test.mjs && node test/robustness.test.mjs"
+    "test": "node test/sandbox.test.mjs > /dev/null && node test/mocks.test.mjs && node test/slow-model.test.mjs && node test/robustness.test.mjs && node test/physics.test.mjs",
+    "build:physics": "bash physics/build.sh"
   },
   "author": "R4e-Pi",
   "license": "MIT",

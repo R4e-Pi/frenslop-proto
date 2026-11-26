@@ -10,6 +10,7 @@ const MOCKS = [
   [/moon|low grav|gravity/i, examples['moon gravity']],
   [/mower|tractor|car|kart|vehicle|ride/i, examples['a lawn mower I can ride']],
   [/portal|teleport|warp/i, examples['a spinning portal that sends you into the sky']],
+  [/wreck|smash|crash|crate|demolish/i, examples['a wrecking ball that smashes a tower of crates']],
   [/ball/i, examples['a beach ball item']],
   [/trampoline|bounce|jump pad|launch/i, `
 const [x, , z] = here;

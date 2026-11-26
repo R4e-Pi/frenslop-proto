@@ -18,6 +18,7 @@ if (fs.existsSync(envFile)) {
 const { WebSocketServer } = await import('ws');
 const { Room } = await import('./src/room.js');
 const { generateMod, checkLLM, llmConfig } = await import('./src/llm.js');
+const { physicsStatus } = await import('./src/physics.js');
 
 const PORT = Number(process.env.PORT || 8090);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -48,7 +49,7 @@ const server = http.createServer((req, res) => {
   if (/^\/r\/[^/]+\/?$/.test(p)) return serveFile(res, path.join(ROOT, 'public', 'index.html'));
   if (p === '/api/status') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ rooms: [...rooms.values()].map(r => ({ id: r.id, players: r.clients.size, mods: r.mods.size })), provider: llmConfig.provider, model: llmConfig.model }));
+    res.end(JSON.stringify({ rooms: [...rooms.values()].map(r => ({ id: r.id, players: r.clients.size, mods: r.mods.size, physics: r.physics.name })), provider: llmConfig.provider, model: llmConfig.model }));
     return;
   }
   if (p.startsWith('/vendor/three/')) {
@@ -80,4 +81,5 @@ wss.on('connection', (ws, req) => {
 server.listen(PORT, HOST, async () => {
   console.log(`frenslop-proto on http://${HOST}:${PORT}/r/lobby`);
   console.log(`llm: ${await checkLLM()}`);
+  console.log(`physics: ${physicsStatus()}`);
 });
