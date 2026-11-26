@@ -126,6 +126,26 @@ async function trace(room, name, seconds) {
   room.close();
 }
 
+// 4c. the prompt's own "a swinging pendulum" example: swings both ways about a fixed pivot, doesn't spin
+{
+  const { SYSTEM_PROMPT } = await import('../src/prompt.js');
+  const code = SYSTEM_PROMPT.match(/EXAMPLE: "a swinging pendulum"\n```js\n([\s\S]*?)```/)[1];
+  const { room, c } = makeRoom('pendulumexample');
+  room.mods.clear();
+  await room.build(c, code);
+  const angles = [], pivots = [];
+  const t0 = Date.now();
+  while (Date.now() - t0 < 3000) {
+    const e = ent(room, 'pendulum');
+    if (e) { angles.push(e.rotation[2]); pivots.push(e.position[1]); }
+    await sleep(20);
+  }
+  const lo = Math.min(...angles), hi = Math.max(...angles), drift = Math.max(...pivots) - Math.min(...pivots);
+  check('prompt example pendulum swings both ways', lo < -0.2 && hi > 0.2 && hi < 1.2 && lo > -1.2,
+    `angle ${lo.toFixed(2)} … ${hi.toFixed(2)} rad, pivot drift ${drift.toFixed(3)} m`);
+  room.close();
+}
+
 // 5. motor hinge holds its speed; 6. players push things; 7. moved platforms don't drift
 {
   const { room, c } = makeRoom('motors');

@@ -10,7 +10,7 @@ RULES (follow every time)
   1. GROUND: things stand on the ground. Spawn at [x, 0, z] and build parts upward (a part of height h resting on the ground has offset y = h/2). Only portals, clouds and sky platforms float.
   2. LAYOUT: every part gets its own offset. Repeated parts (legs, wheels, posts, steps, crates) go at different positions: build them with a for loop.
   3. BEHAVIOUR: if the thing DOES something (bounces, launches, spins, swings, opens, rides, teleports), code it with physics, joints, world.onEnter, world.onTick, interact or vehicles.
-     Things that hang or swing (pendulums, swings, lamps, punching bags) need a static frame or post, and a rope or hinge at a pivot ABOVE them. The hanging part is dynamic. A swing's hinge axis is horizontal (like [0,0,1]) with no motor; start it with one world.impulse.
+     Things that hang or swing (pendulums, swings, lamps, punching bags) need a static frame or post, and a rope or hinge at a pivot ABOVE them. The hanging part is dynamic. A swing's hinge axis is horizontal (like [0,0,1]) with no motor; start it pulled back (rotation) and gravity does the rest.
   4. PHYSICS: anything that should fall, roll, bounce, topple, swing or be kicked is physics:'dynamic' with a fitting material and a real mass (football 0.43 kg, crate 20 kg, person 70 kg, car 1200 kg). Make dynamic things one simple shape or a few parts. Move dynamic things with impulse/force/joints, not world.move. Scenery stays static.
   5. ONLY WHAT WAS ASKED: the examples teach the API. Never copy them; build only the requested thing.
 
@@ -84,16 +84,21 @@ const pad = world.spawn({ name: 'launch pad', position: [x, 0, z], parts });
 world.onEnter(pad, 1.5, (player) => players.launch(player.id, [0, 18, 0]));
 \`\`\`
 
-EXAMPLE: "a wrecking ball that smashes a tower of crates"
+EXAMPLE: "a swinging pendulum"
 \`\`\`js
 const [x, , z] = here;
-for (let i = 0; i < 6; i++)
-  world.spawn({ name: 'crate', physics: 'dynamic', material: 'wood', mass: 20, position: [x, 0.3 + i * 0.6, z],
-    parts: [{ shape: 'box', size: [0.6, 0.6, 0.6], color: '#a8743a' }] });
-const ball = world.spawn({ name: 'wrecking ball', physics: 'dynamic', material: 'steel', mass: 800, position: [x - 6, 4, z],
-  parts: [{ shape: 'sphere', size: [1.2, 1.2, 1.2], color: '#333333' }] });
-world.rope(ball, null, { anchorA: [x - 6, 4, z], anchorB: [x - 1, 9, z] });
-world.onHit(ball, (other, speed) => { if (speed > 3) world.broadcast('CRASH ' + speed.toFixed(1) + ' m/s'); });
+const wood = '#7a5230';
+world.spawn({ name: 'pendulum frame', position: [x, 0, z], parts: [
+  { shape: 'box', size: [0.2, 3.4, 0.2], offset: [0, 1.7, -0.6], color: wood },
+  { shape: 'box', size: [0.2, 3.4, 0.2], offset: [0, 1.7, 0.6], color: wood },
+  { shape: 'box', size: [0.3, 0.2, 1.4], offset: [0, 3.4, 0], color: wood },
+] });
+// rod and bob are ONE dynamic body; its position is the pivot, its parts hang below it, and it starts pulled back 0.5 rad
+const bob = world.spawn({ name: 'pendulum', physics: 'dynamic', material: 'steel', mass: 8, position: [x, 3.2, z], rotation: [0, 0, 0.5], parts: [
+  { shape: 'box', size: [0.06, 2, 0.06], offset: [0, -1, 0], color: '#999999' },
+  { shape: 'sphere', size: [0.5, 0.5, 0.5], offset: [0, -2.2, 0], color: '#c9a227' },
+] });
+world.hinge(bob, null, { anchor: [x, 3.2, z], axis: [0, 0, 1] }); // horizontal axis, no motor: gravity swings it
 \`\`\`
 
 EXAMPLE: "a beach ball item"
