@@ -2,7 +2,7 @@
 //   LLM_PROVIDER=ollama (default) -> your local Ollama (/api/chat)
 //   LLM_PROVIDER=mock             -> canned mods, for testing without a model
 import { SYSTEM_PROMPT, userPrompt } from './prompt.js';
-import { cleanModCode } from './sandbox.js';
+import { cleanModCode, repairBrackets } from './sandbox.js';
 import { mockMod } from './mock.js';
 
 const cfg = {
@@ -12,6 +12,7 @@ const cfg = {
   attempts: Number(process.env.LLM_ATTEMPTS || 3),
   timeoutMs: Number(process.env.LLM_TIMEOUT_MS || 240000),
   numCtx: Number(process.env.OLLAMA_NUM_CTX || 4096),
+  showCodeChars: Number(process.env.LLM_RETRY_CODE_CHARS || 1600), // show failed code on retry up to this size
   // "-1" = never unload (pinned model); any Ollama duration like "30m" also works.
   // Must match the server's OLLAMA_KEEP_ALIVE or each request resets the timer.
   keepAlive: process.env.OLLAMA_KEEP_ALIVE || '30m',
@@ -56,11 +57,15 @@ export async function generateMod(prompt, ctx, tryInstall) {
     return code;
   }
 
-  let lastErr = 'no attempts made';
+  let lastErr = 'no attempts made', lastCode = '';
   for (let i = 1; i <= cfg.attempts; i++) {
-    // Each attempt is a fresh 2-message chat so it always fits small contexts;
-    // a retry carries only the previous error, not the whole failed reply.
-    const retryNote = i > 1 ? `\n\nYour previous attempt failed with: ${lastErr}\nAvoid that mistake. Use only the documented API.` : '';
+    // Each attempt is a fresh 2-message chat so it always fits small contexts. A retry shows the
+    // model its own failed code when that's short (it can't fix line 5 without seeing line 5);
+    // long failures carry only the error, so the prompt never crowds out the reply.
+    const retryNote = i === 1 ? ''
+      : lastCode && lastCode.length <= cfg.showCodeChars
+        ? `\n\nYour previous code failed:\n\`\`\`js\n${lastCode}\n\`\`\`\nError: ${lastErr}\nFix it (keep what was right) and reply with the complete corrected code in one \`\`\`js block.`
+        : `\n\nYour previous attempt failed with: ${lastErr}\nAvoid that mistake. Use only the documented API.`;
     const messages = [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: userPrompt(prompt) + retryNote },
@@ -70,9 +75,18 @@ export async function generateMod(prompt, ctx, tryInstall) {
     const reply = await ollamaChat(messages);
     const code = cleanModCode(reply);
     console.log(`[llm] "${prompt}" attempt ${i}: ${code.length} chars in ${Date.now() - t0}ms`);
-    const err = code ? tryInstall(code) : 'empty reply';
+    let err = code ? tryInstall(code) : 'empty reply';
     if (!err) return code;
+    if (/SyntaxError/.test(err)) {
+      // unbalanced brackets are the usual cause: repair them locally before asking the model again
+      const fixed = repairBrackets(code);
+      if (fixed !== code) {
+        const err2 = tryInstall(fixed);
+        if (!err2) { console.log(`[llm]   repaired brackets (${err.slice(0, 60)}) — no retry needed`); return fixed; }
+      }
+    }
     lastErr = err;
+    lastCode = code;
     console.log(`[llm]   rejected: ${err}`);
   }
   throw new Error(`model couldn't produce working code (${lastErr})`);

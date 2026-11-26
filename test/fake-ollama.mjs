@@ -11,7 +11,7 @@ http.createServer((req, res) => {
     const req2 = JSON.parse(body);
     const msgs = req2.messages;
     n++;
-    const firstTry = !/previous attempt failed/.test(msgs.at(-1).content);
+    const firstTry = !/previous (attempt|code) failed/.test(msgs.at(-1).content);
     const content = firstTry && msgs.length === 2
       ? "Sure! Here's your mod:\n```js\nconst x = here[0];\nworld.spawnn({ name: 'oops' });\n```"
       : "```js\nconst [x,,z] = here;\nconst c = world.spawn({ name: 'giant cube', position: [x, 2, z], parts: [{ shape: 'box', size: [4,4,4], color: '#ff00aa' }] });\nworld.onTick((dt,t)=>world.rotate(c,[0,t,0]));\n```";

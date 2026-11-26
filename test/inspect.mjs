@@ -9,10 +9,27 @@ import { Room } from '../src/room.js';
 
 const [room = 'lobby', match = ''] = process.argv.slice(2);
 const file = path.join('data', 'rooms', `${room}.json`);
-if (!fs.existsSync(file)) { console.log(`no saved mods for room "${room}" (${file})`); process.exit(1); }
-const mods = JSON.parse(fs.readFileSync(file, 'utf8')).mods;
-const mod = [...mods].reverse().find(m => m.prompt.toLowerCase().includes(match.toLowerCase()));
-if (!mod) { console.log(`no mod matching "${match}". saved: ${mods.map(m => `"${m.prompt}"`).join(', ')}`); process.exit(1); }
+const failedFile = path.join('data', 'rooms', `${room}.failed.json`);
+const mods = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).mods : [];
+const failed = fs.existsSync(failedFile) ? JSON.parse(fs.readFileSync(failedFile, 'utf8')) : [];
+const wanted = m => m.prompt.toLowerCase().includes(match.toLowerCase());
+const mod = [...mods].reverse().find(wanted);
+if (!mod) {
+  // not a live mod: show the failed build (every attempt's code and error) if there is one
+  const f = [...failed].reverse().find(wanted);
+  if (!f) {
+    console.log(`nothing matching "${match}" in room "${room}".`);
+    console.log(`  built: ${mods.map(m => `"${m.prompt}"`).join(', ') || 'none'}`);
+    console.log(`  failed: ${failed.map(m => `"${m.prompt}"`).join(', ') || 'none'}`);
+    process.exit(1);
+  }
+  console.log(`=== "${f.prompt}" FAILED (room ${room}, ${f.at}) ===\n${f.error}`);
+  f.attempts.forEach((a, i) => {
+    console.log(`\n--- attempt ${i + 1}: ${a.error}`);
+    a.code.split('\n').forEach((l, n) => console.log(String(n + 1).padStart(3), l));
+  });
+  process.exit(0);
+}
 
 const r2 = v => (Array.isArray(v) ? `[${v.map(n => (+n).toFixed(2)).join(', ')}]` : v);
 console.log(`=== "${mod.prompt}" (room ${room}, built at here = ${r2(mod.here)}) ===\n`);

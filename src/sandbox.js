@@ -241,3 +241,49 @@ export function cleanModCode(text) {
     .replace(/^(\s*)export\s+(default\s+)?/gm, '$1'); // keep the code, drop the keyword
   return code.trim();
 }
+
+// Small models often get brackets wrong, e.g. `world.spawn({ … parts: [ … ]);` (missing `}`).
+// After a SyntaxError, balance (), [] and {} outside strings and comments: insert closers a
+// later closer skips over, drop stray closers, append missing ones at the end. Only used when
+// the original code didn't parse, and the result still has to load and do something.
+export function repairBrackets(src) {
+  const pairs = { '(': ')', '[': ']', '{': '}' };
+  const stack = [];
+  let out = '', i = 0;
+  const n = src.length;
+  const copyUntil = j => { out += src.slice(i, j); i = j; };
+  while (i < n) {
+    const c = src[i], d = src[i + 1];
+    if (c === '/' && d === '/') { const j = src.indexOf('\n', i); copyUntil(j < 0 ? n : j); continue; }
+    if (c === '/' && d === '*') { const j = src.indexOf('*/', i + 2); copyUntil(j < 0 ? n : j + 2); continue; }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < n && src[j] !== c && src[j] !== '\n') j += src[j] === '\\' ? 2 : 1;
+      copyUntil(Math.min(n, j + 1)); continue;
+    }
+    if (c === '`') { // template literal, including ${ … } expressions
+      let j = i + 1, depth = 0;
+      while (j < n) {
+        if (src[j] === '\\') { j += 2; continue; }
+        if (depth === 0 && src[j] === '`') break;
+        if (src[j] === '$' && src[j + 1] === '{') { depth++; j += 2; continue; }
+        if (depth > 0 && src[j] === '{') depth++;
+        if (depth > 0 && src[j] === '}') depth--;
+        j++;
+      }
+      copyUntil(Math.min(n, j + 1)); continue;
+    }
+    if (pairs[c]) { stack.push(c); out += c; i++; continue; }
+    if (c === ')' || c === ']' || c === '}') {
+      if (stack.some(o => pairs[o] === c)) {
+        while (pairs[stack[stack.length - 1]] !== c) out += pairs[stack.pop()]; // close what it skipped
+        stack.pop();
+        out += c;
+      } // else: a closer with no opener at all, drop it
+      i++; continue;
+    }
+    out += c; i++;
+  }
+  while (stack.length) out += pairs[stack.pop()];
+  return out;
+}

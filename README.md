@@ -73,8 +73,14 @@ What it simulates:
 the model for its retry: building more than 10 cm underground, a joint pinned to the world without saying where
 (`anchorB` for a rope, `anchor` for a hinge), or a rope hanging from a point below what it holds.
 
-**Inspect a saved mod:** `node test/inspect.mjs <room> [part of the prompt]` prints the model's code, what it
-spawned, its joints, 3 s of simulated motion, and findings (for example "nothing holds it, so it just falls").
+**Syntax errors:** if the code fails only because brackets don't balance (a 3B classic: `]);` for `] });`), the
+server repairs the brackets itself and installs it, with no model round trip. Otherwise the retry shows the model its own
+failed code (up to `LLM_RETRY_CODE_CHARS`, default 1600) plus the error, so it can fix the exact line.
+
+**Inspect a mod:** run `node test/inspect.mjs <room> [part of the prompt]` in a second terminal (tmux `Ctrl-b %`)
+while the server runs. For a built mod it prints the code, what it spawned, its joints, 3 s of simulated motion, and
+findings (for example "nothing holds it, so it just falls"). For a failed build it prints every attempt's code and
+error (the last 10 failures per room are kept in `data/rooms/<room>.failed.json`).
 
 `test/physics.test.mjs` checks mods against textbook results:
 

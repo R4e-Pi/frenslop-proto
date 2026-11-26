@@ -63,7 +63,7 @@ check('fence: export keyword kept code', cleanModCode('```js\nexport const g = 2
   const mod = [...room.mods.values()][0];
   check('retry built the mod', mod?.status === 'live', `status ${mod?.status}: ${mod?.error}`);
   check('retry is a fresh 2-message chat', calls[1]?.messages.length === 2, `${calls[1]?.messages.length} messages`);
-  check('retry carries the error, not the failed reply', /previous attempt failed/.test(calls[1]?.messages[1].content) && !/spawnn\(\{\}\);\n/.test(calls[1]?.messages[1].content.split('failed with:')[0]));
+  check('retry shows the model its short failed code and the error', /previous code failed/.test(calls[1]?.messages[1].content) && /world\.spawnn/.test(calls[1]?.messages[1].content) && /not a function/.test(calls[1]?.messages[1].content));
   // prompt (estimated conservatively at 3.2 chars/token) + reply budget must fit the context
   const promptTokens = Math.ceil(calls[0].messages.reduce((n, m) => n + m.content.length, 0) / 3.2);
   check('prompt + reply budget fit the context', promptTokens + calls[0].options.num_predict <= calls[0].options.num_ctx,
@@ -85,6 +85,44 @@ check('fence: export keyword kept code', cleanModCode('```js\nexport const g = 2
   check('rope hanging from above is fine', run(bob + `world.rope(b, null, { anchorA: [0, 2, 0], anchorB: [0, 4, 0] });`) === null);
   check('hinge to the world without anchor is an error', /give anchor/.test(run(bob + `world.hinge(b, null, { axis: [0, 0, 1] });`) || ''));
   check('joint on a made-up id is an error', /returned by world.spawn/.test(run(`world.rope('nope', null, { anchorB: [0, 4, 0] });`) || ''));
+}
+
+// 6. replay of the live failure: attempt 1 forgets the hinge pivot, attempt 2 has `]);` instead of `] });`.
+//    The bracket repair should finish the build without a third model call.
+{
+  const pendulum = `const [x, , z] = here;
+const frame = world.spawn({ name: 'frame', position: [x, 0, z], parts: [
+  { shape: 'box', size: [0.2, 3, 0.2], offset: [-1, 1.5, 0] },
+  { shape: 'box', size: [2.2, 0.2, 0.2], offset: [0, 3, 0] }
+]);
+const bob = world.spawn({ name: 'bob', physics: 'dynamic', material: 'steel', mass: 5, position: [x + 0.6, 1.4, z], parts: [{ shape: 'sphere', size: [0.3, 0.3, 0.3] }] });
+world.rope(bob, null, { anchorA: [x + 0.6, 1.4, z], anchorB: [x, 2.9, z] });`;
+  const replies = [
+    "```js\nconst b = world.spawn({ name: 'bob', physics: 'dynamic', position: [0, 1, 0], parts: [{ shape: 'sphere', size: [0.3, 0.3, 0.3] }] });\nworld.hinge(b, null, { axis: [0, 0, 1] });\n```",
+    '```js\n' + pendulum + '\n```',
+  ];
+  const calls = [];
+  globalThis.fetch = async (url, opts) => { calls.push(JSON.parse(opts.body)); return { ok: true, json: async () => ({ message: { content: replies[calls.length - 1] || replies[1] } }) }; };
+  const { generateMod } = await import('../src/llm.js');
+  const dir = tmpDir();
+  const room = new Room('replay', { dataDir: dir, generate: generateMod });
+  const c = room.join(fakeWs(), 'tester');
+  await room.requestMod(c, 'a swinging pendulum');
+  const mod = [...room.mods.values()][0];
+  check('pivot error, then bracket error: built', mod?.status === 'live', `status ${mod?.status}: ${mod?.error}`);
+  check('bracket error repaired without a third model call', calls.length === 2, `${calls.length} model calls`);
+  if (room.physics.name === 'box3d') check('pendulum bob is hanging on its rope', room.joints.size === 1, `${room.joints.size} joint(s)`);
+  room.close();
+
+  // a build that never works is saved with every attempt for test/inspect.mjs
+  calls.length = 0;
+  globalThis.fetch = async (url, opts) => { calls.push(JSON.parse(opts.body)); return { ok: true, json: async () => ({ message: { content: '```js\nworld.spawnn({});\n```' } }) }; };
+  const room2 = new Room('replay2', { dataDir: dir, generate: generateMod });
+  const c2 = room2.join(fakeWs(), 'tester');
+  await room2.requestMod(c2, 'something impossible');
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'replay2.failed.json'), 'utf8'));
+  check('failed builds are saved with each attempt', saved.at(-1)?.attempts.length === 3 && /not a function/.test(saved.at(-1).attempts[0].error), `${saved.at(-1)?.attempts.length} attempts saved`);
+  room2.close();
 }
 
 process.exit(fail ? 1 : 0);

@@ -169,6 +169,7 @@ export class Room {
       mod.status = 'failed';
       mod.error = text(e.message, 300);
       console.warn(`[${this.id}] build failed "${prompt}": ${mod.error}`);
+      this.#saveFailure(mod);
       this.#teardown(mod);
       this.#system(`couldn't build "${prompt}": ${mod.error}`);
     }
@@ -182,20 +183,21 @@ export class Room {
     // stops retrying, but install nothing (no orphaned entities or sandbox).
     if (!this.mods.has(mod.id)) return null;
     this.#teardown(mod);
+    const fail = msg => { (mod.attempts ??= []).push({ code, error: msg }); return msg; };
     let sb;
     try {
       sb = new ModSandbox(mod.id, { here: mod.here, author: mod.author });
       const ops = sb.load(code);
       if (!ops.some(o => ['spawn', 'world', 'item', 'tick'].includes(o.op))) {
         sb.dispose();
-        return 'the code ran but did nothing visible — it must call world.spawn, world.setGravity, items.register or similar';
+        return fail('the code ran but did nothing visible — it must call world.spawn, world.setGravity, items.register or similar');
       }
       Object.assign(mod, { sandbox: sb, code, ticks: [], enters: [], worldSet: {} });
       this.#apply(mod, ops);
       return null;
     } catch (e) {
       sb?.dispose();
-      return e.message;
+      return fail(e.message);
     }
   }
 
@@ -526,6 +528,17 @@ export class Room {
   }
 
   // ---------- persistence ----------
+  // the last 10 failed builds per room, with every attempt's code and error (for test/inspect.mjs)
+  #saveFailure(mod) {
+    try {
+      const file = this.file.replace(/\.json$/, '.failed.json');
+      const list = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
+      list.push({ prompt: mod.prompt, here: mod.here, author: mod.author, at: new Date().toISOString(), error: mod.error, attempts: mod.attempts || [] });
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(list.slice(-10), null, 1));
+    } catch (e) { console.warn(`[${this.id}] couldn't save failed build:`, e.message); }
+  }
+
   #save() {
     const mods = [...this.mods.values()].filter(m => m.status === 'live' && m.code)
       .map(({ id, prompt, author, here, code }) => ({ id, prompt, author, here, code }));
