@@ -27,7 +27,7 @@ export function replyBudget(promptChars) {
 const keepAliveValue = v => (/^-?\d+$/.test(v) ? Number(v) : v);
 export const llmConfig = cfg;
 
-async function ollamaChat(messages) {
+async function ollamaChat(messages, temperature = 0.4) {
   const numPredict = replyBudget(messages.reduce((n, m) => n + m.content.length, 0));
   const res = await fetch(`${cfg.url}/api/chat`, {
     method: 'POST',
@@ -38,7 +38,7 @@ async function ollamaChat(messages) {
       messages,
       stream: false,
       keep_alive: keepAliveValue(cfg.keepAlive),
-      options: { temperature: 0.4, num_ctx: cfg.numCtx, num_predict: numPredict },
+      options: { temperature, num_ctx: cfg.numCtx, num_predict: numPredict },
     }),
   }).catch(e => { throw new Error(`can't reach Ollama at ${cfg.url} (${e.cause?.code || e.message})`); });
   if (!res.ok) throw new Error(`Ollama ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -72,7 +72,8 @@ export async function generateMod(prompt, ctx, tryInstall) {
     ];
     const t0 = Date.now();
     console.log(`[llm] "${prompt}" attempt ${i}: sending to ${cfg.url} (${cfg.model}, ctx ${cfg.numCtx})…`);
-    const reply = await ollamaChat(messages);
+    // retries sample a little hotter: at a fixed temperature a small model tends to repeat its mistake
+    const reply = await ollamaChat(messages, Math.min(0.8, 0.4 + 0.2 * (i - 1)));
     const code = cleanModCode(reply);
     console.log(`[llm] "${prompt}" attempt ${i}: ${code.length} chars in ${Date.now() - t0}ms`);
     let err = code ? tryInstall(code) : 'empty reply';

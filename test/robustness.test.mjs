@@ -64,6 +64,7 @@ check('fence: export keyword kept code', cleanModCode('```js\nexport const g = 2
   check('retry built the mod', mod?.status === 'live', `status ${mod?.status}: ${mod?.error}`);
   check('retry is a fresh 2-message chat', calls[1]?.messages.length === 2, `${calls[1]?.messages.length} messages`);
   check('retry shows the model its short failed code and the error', /previous code failed/.test(calls[1]?.messages[1].content) && /world\.spawnn/.test(calls[1]?.messages[1].content) && /not a function/.test(calls[1]?.messages[1].content));
+  check('retry samples hotter so it doesn\'t repeat itself', calls[1]?.options.temperature > calls[0]?.options.temperature, `${calls[0]?.options.temperature} → ${calls[1]?.options.temperature}`);
   // prompt (estimated conservatively at 3.2 chars/token) + reply budget must fit the context
   const promptTokens = Math.ceil(calls[0].messages.reduce((n, m) => n + m.content.length, 0) / 3.2);
   check('prompt + reply budget fit the context', promptTokens + calls[0].options.num_predict <= calls[0].options.num_ctx,
@@ -84,7 +85,37 @@ check('fence: export keyword kept code', cleanModCode('```js\nexport const g = 2
   check('rope hanging from below is an error', /must be above/.test(run(bob + `world.rope(b, null, { anchorA: [0, 2, 0], anchorB: [0, 1, 0] });`) || ''));
   check('rope hanging from above is fine', run(bob + `world.rope(b, null, { anchorA: [0, 2, 0], anchorB: [0, 4, 0] });`) === null);
   check('hinge to the world without anchor is an error', /give anchor/.test(run(bob + `world.hinge(b, null, { axis: [0, 0, 1] });`) || ''));
-  check('joint on a made-up id is an error', /returned by world.spawn/.test(run(`world.rope('nope', null, { anchorB: [0, 4, 0] });`) || ''));
+  check('joint on a made-up id is an error', /not something spawned/.test(run(`world.rope('nope', null, { anchorB: [0, 4, 0] });`) || ''));
+  // seen live with qwen2.5:3b: things referred to by name, 'ground' for the world, arguments swapped,
+  // anchorA for the pivot. Those mean something unambiguous, so they're accepted.
+  check('joint by name with b = \'ground\' works', run(bob + `world.hinge('bob', 'ground', { anchor: [0, 3, 0], axis: [0, 0, 1] });`) === null);
+  check('joint with arguments swapped works', run(bob + `world.hinge(null, 'bob', { anchorA: [0, 3, 0], axis: [0, 0, 1] });`) === null);
+  check('anchorA is taken as the pivot of a hinge to the world', run(bob + `world.hinge(b, null, { anchorA: [0, 3, 0], axis: [0, 0, 1] });`) === null);
+  check('impulse by name works', run(bob + `world.impulse('Bob', [1, 0, 0]);`) === null);
+  check('a pivot underground is an error', /underground/.test(run(bob + `world.hinge(b, null, { anchor: [0, -1, 0], axis: [0, 0, 1] });`) || ''));
+  check('an unrotated part underground is caught beside a rotated one', /below the ground/.test(run(`world.spawn({ name: 'p', physics: 'dynamic', position: [0, -0.5, 0], parts: [{ shape: 'cylinder', size: [0.2, 0.3, 0.2], offset: [0, 0.15, 0] }, { shape: 'torus', size: [0.4, 0.4, 0.4], offset: [0, 0.7, 0], rotation: [1.57, 0, 0] }] });`) || ''));
+  check('a rotated part is judged by its centre', run(`world.spawn({ name: 'ring', position: [0, 0, 0], parts: [{ shape: 'torus', size: [1, 1, 1], offset: [0, 0.6, 0], rotation: [1.57, 0, 0] }] });`) === null);
+}
+
+// 5b. the three codes qwen2.5:3b wrote for "a swinging pendulum" on the Pi (26 Nov). Before: all three
+//     failed with the same unhelpful "first argument must be an id". Now each gets an error that says
+//     what is actually wrong (it starts underground), and the joint line itself is accepted.
+{
+  const { ModSandbox } = await import('../src/sandbox.js');
+  const run = code => { const sb = new ModSandbox('v', { here: [10, 0, 10], author: {} }); try { sb.load(code); return null; } catch (e) { return e.message; } finally { sb.dispose(); } };
+  const live = joint => `const [x, , z] = here;
+world.spawn({ name: 'pendulum', physics: 'dynamic', material: 'wood', mass: 1, position: [x, -0.5, z], parts: [
+  { shape: 'cylinder', size: [0.2, 0.3, 0.2], offset: [0, 0.15, 0], color: '#8a6d3b' },
+  { shape: 'torus', size: [0.4, 0.4, 0.4], offset: [0, 0.7, -0.2], rotation: [Math.PI / 2, 0, 0], color: '#8a6d3b' },
+] });
+${joint}`;
+  const j1 = `const joint = world.hinge(null, 'pendulum', { anchorA: [x, -1, z], axis: [0, 1, 0], motorSpeed: 5, maxTorque: 100 });`;
+  const j2 = `const joint = world.hinge('pendulum', 'ground', { anchorA: [x, -1, z], axis: [0, 1, 0], motorSpeed: 5, maxTorque: 100 });`;
+  check('live attempt 1 now reports it starts underground', /below the ground.*below its pivot/.test(run(live(j1)) || ''), run(live(j1)));
+  check('live attempts 2-3 now report it starts underground', /below the ground/.test(run(live(j2)) || ''), run(live(j2)));
+  const lifted = c => c.replace('position: [x, -0.5, z]', 'position: [x, 1, z]');
+  check('lifted, the underground pivot is reported', /underground/.test(run(lifted(live(j2))) || ''), run(lifted(live(j2))));
+  check('pivot raised too, the 3B\'s joint line is accepted', run(lifted(live(j2)).replace('[x, -1, z]', '[x, 3, z]')) === null, run(lifted(live(j2)).replace('[x, -1, z]', '[x, 3, z]')));
 }
 
 // 6. replay of the live failure: attempt 1 forgets the hinge pivot, attempt 2 has `]);` instead of `] });`.

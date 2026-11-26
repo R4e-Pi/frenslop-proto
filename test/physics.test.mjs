@@ -106,6 +106,26 @@ async function trace(room, name, seconds) {
   room.close();
 }
 
+// 4b. the same pendulum written the way qwen2.5:3b writes joints: by name, 'ground' for the world,
+//     anchorA for the pivot, no stored id. It must hang and swing just the same.
+{
+  const { room, c } = makeRoom('pendulum3b');
+  const L = 2, a0 = 0.15;
+  await room.build(c, `
+    world.spawn({ name: 'pendulum', physics: 'dynamic', material: 'steel', position: [${L * Math.sin(a0)}, ${5 - L * Math.cos(a0)}, 0], parts: [{ shape: 'sphere', size: [0.1, 0.1, 0.1] }] });
+    world.hinge('pendulum', 'ground', { anchorA: [0, 5, 0], axis: [0, 0, 1] });`);
+  const tr = await trace(room, 'pendulum', 4.2);
+  const cross = [];
+  for (let i = 1; i < tr.length; i++) {
+    const [t0, a] = tr[i - 1], [t1, b] = tr[i];
+    if ((a[0] > 0) !== (b[0] > 0)) cross.push(t0 + (t1 - t0) * (a[0] / (a[0] - b[0])));
+  }
+  const T = cross.length >= 3 ? cross[2] - cross[0] : NaN;
+  const theory = 2 * Math.PI * Math.sqrt(L / g);
+  check('pendulum written by name swings', Math.abs(T - theory) < 0.12, `measured ${T.toFixed(2)} s, theory ${theory.toFixed(2)} s`);
+  room.close();
+}
+
 // 5. motor hinge holds its speed; 6. players push things; 7. moved platforms don't drift
 {
   const { room, c } = makeRoom('motors');

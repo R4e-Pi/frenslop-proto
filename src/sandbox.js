@@ -52,20 +52,20 @@ const world = {
       bullet: !!o.bullet,
     };
     __checkGround(e);
-    __ents[id] = { position: e.position.slice(), rotation: e.rotation.slice(), velocity: e.velocity.slice() };
+    __ents[id] = { name: e.name, position: e.position.slice(), rotation: e.rotation.slice(), velocity: e.velocity.slice() };
     __ops.push(e);
     return id;
   },
   // live state: dynamic bodies report their simulated position/rotation/velocity
-  get(id) { const e = __ents[id]; return e ? { position: e.position.slice(), rotation: e.rotation.slice(), velocity: (e.velocity || [0, 0, 0]).slice() } : null; },
-  move(id, position) { if (!__ents[id]) return; __ents[id].position = __v(position, __ents[id].position); __ops.push({ op: 'update', id, position: __ents[id].position }); },
-  rotate(id, rotation) { if (!__ents[id]) return; __ents[id].rotation = __v(rotation, __ents[id].rotation); __ops.push({ op: 'update', id, rotation: __ents[id].rotation }); },
-  push(id, velocity) { __ops.push({ op: 'push', id, velocity: __v(velocity, [0, 0, 0]) }); },
+  get(id) { id = __id(id); const e = __ents[id]; return e ? { position: e.position.slice(), rotation: e.rotation.slice(), velocity: (e.velocity || [0, 0, 0]).slice() } : null; },
+  move(id, position) { id = __id(id); if (!__ents[id]) return; __ents[id].position = __v(position, __ents[id].position); __ops.push({ op: 'update', id, position: __ents[id].position }); },
+  rotate(id, rotation) { id = __id(id); if (!__ents[id]) return; __ents[id].rotation = __v(rotation, __ents[id].rotation); __ops.push({ op: 'update', id, rotation: __ents[id].rotation }); },
+  push(id, velocity) { __ops.push({ op: 'push', id: __id(id), velocity: __v(velocity, [0, 0, 0]) }); },
   // physics (SI units): impulse N·s (instant kick), force N (this tick; call from onTick to keep
   // pushing), spin rad/s (angular velocity)
-  impulse(id, j) { __ops.push({ op: 'impulse', id, value: __v(j, [0, 0, 0]) }); },
-  force(id, F) { __ops.push({ op: 'force', id, value: __v(F, [0, 0, 0]) }); },
-  spin(id, w) { __ops.push({ op: 'spin', id, value: __v(w, [0, 0, 0]) }); },
+  impulse(id, j) { __ops.push({ op: 'impulse', id: __id(id), value: __v(j, [0, 0, 0]) }); },
+  force(id, F) { __ops.push({ op: 'force', id: __id(id), value: __v(F, [0, 0, 0]) }); },
+  spin(id, w) { __ops.push({ op: 'spin', id: __id(id), value: __v(w, [0, 0, 0]) }); },
   // joints connect two bodies at a world-space anchor; b = null attaches a to the fixed world
   hinge(a, b, o) { return __joint('hinge', a, b, o); },
   slider(a, b, o) { return __joint('slider', a, b, o); },
@@ -74,38 +74,71 @@ const world = {
   rope(a, b, o) { return __joint('rope', a, b, o); },
   unjoin(jid) { __ops.push({ op: 'unjoint', id: jid }); },
   // impacts: fn(otherId, speed m/s, point) — otherId is an entity id, a player id or 'ground'
-  onHit(id, fn) { __ops.push({ op: 'hit', id, h: __h(fn) }); },
-  remove(id) { delete __ents[id]; __ops.push({ op: 'remove', id }); },
+  onHit(id, fn) { __ops.push({ op: 'hit', id: __id(id), h: __h(fn) }); },
+  remove(id) { id = __id(id); delete __ents[id]; __ops.push({ op: 'remove', id }); },
   setGravity(g) { __ops.push({ op: 'world', key: 'gravity', value: Number(g) }); },
   setSky(color) { __ops.push({ op: 'world', key: 'sky', value: String(color) }); },
   setFog(color, near, far) { __ops.push({ op: 'world', key: 'fog', value: [String(color), Number(near), Number(far)] }); },
   onTick(fn) { __ops.push({ op: 'tick', h: __h(fn) }); },
-  onEnter(id, radius, fn) { __ops.push({ op: 'enter', id, radius: Number(radius) || 2, h: __h(fn) }); },
+  onEnter(id, radius, fn) { __ops.push({ op: 'enter', id: __id(id), radius: Number(radius) || 2, h: __h(fn) }); },
   broadcast(text) { __ops.push({ op: 'msg', to: null, text: String(text) }); },
 };
 
 // Errors thrown here go back to the model as feedback for its retry, so they say what to do.
 function __checkGround(e) {
   const flat = r => !Array.isArray(r) || r.every(v => Math.abs(Number(v) || 0) < 0.01);
-  if (!flat(e.rotation) || !e.parts.every(p => flat(p && p.rotation))) return; // rotated: can't judge cheaply
+  if (!flat(e.rotation)) return; // the whole build is rotated: can't judge cheaply
   let low = Infinity;
   for (const p of e.parts) {
     const sy = Array.isArray(p.size) ? Number(p.size[1]) : Number(p.size);
     const oy = Array.isArray(p.offset) ? Number(p.offset[1]) || 0 : 0;
-    low = Math.min(low, oy - (isFinite(sy) && sy > 0 ? sy : 1) / 2);
+    // an unrotated part's bottom is exact; a rotated part is judged by its centre (never a false alarm)
+    low = Math.min(low, flat(p && p.rotation) ? oy - (isFinite(sy) && sy > 0 ? sy : 1) / 2 : oy);
   }
   const depth = -(e.position[1] + low);
-  if (depth > 0.1) throw new Error(e.name + ' starts ' + depth.toFixed(2) + ' m below the ground: spawn at y = 0 and build parts upward (a part of height h resting on the ground has offset y = h/2)');
+  if (depth > 0.1) throw new Error(e.name + ' starts ' + depth.toFixed(2) + ' m below the ground: spawn at y = 0 and build parts upward (a part of height h resting on the ground has offset y = h/2)'
+    + (e.physics === 'dynamic' ? '; a thing that hangs or swings starts in the air, below its pivot' : ''));
 }
 
+// Bodies are named by the id world.spawn returns. Small models often use the name they gave the
+// thing instead ('pendulum') or 'ground' for the fixed world, so those are accepted too.
+// __ref: id, null (the fixed world) or undefined (nothing by that name in this code).
+const __WORLD = ['ground', 'world', 'fixed', 'floor', 'null', 'none', ''];
+function __ref(v) {
+  if (v === null || v === undefined || v === false) return null;
+  if (typeof v !== 'string') return undefined;
+  if (__ents[v]) return v;
+  const s = v.trim().toLowerCase();
+  if (__WORLD.includes(s)) return null;
+  const ids = Object.keys(__ents);
+  for (let i = ids.length - 1; i >= 0; i--) if (String(__ents[ids[i]].name).toLowerCase() === s) return ids[i];
+  return undefined;
+}
+// for calls that may also take player ids: translate names, pass everything else through unchanged
+function __id(v) { const r = __ref(v); return r ? r : v; }
+
 let __jid = 0;
-function __joint(kind, a, b, o) {
-  o = o || {};
-  if (!__ents[a]) throw new Error('world.' + kind + ': the first argument must be an id returned by world.spawn in this code');
-  if (b && !__ents[b]) throw new Error('world.' + kind + ': the second argument must be an id from world.spawn, or null for the fixed world');
+function __joint(kind, a0, b0, o) {
+  o = Object.assign({}, o || {});
+  let a = __ref(a0), b = __ref(b0);
+  const example = 'const bob = world.spawn({...}); world.' + kind + '(bob, null, { ' + (kind === 'rope' ? 'anchorB: [x, 4, z]' : 'anchor: [x, 3, z], axis: [0, 0, 1]') + ' })';
+  const unknown = v => 'world.' + kind + ': ' + JSON.stringify(v) + ' is not something spawned in this code. Keep the id world.spawn returns and pass that: ' + example;
+  if (a === undefined) throw new Error(unknown(a0));
+  if (b === undefined) throw new Error(unknown(b0));
+  if (a === null && b === null) throw new Error('world.' + kind + ' needs the thing to attach as its first argument: ' + example);
+  if (a === null) { // world.hinge(null, thing, ...): same joint, arguments the other way round
+    a = b; b = null;
+    const t = o.anchorA; o.anchorA = o.anchorB; o.anchorB = t;
+  }
   if (!b) {
+    // pinned to the fixed world. A hinge/ball/weld has a single pivot in world space, so whichever
+    // anchor was given is it; a rope's fixed end is anchorB (or anchor/pivot).
+    if (kind === 'rope') o.anchorB = o.anchorB || o.anchor || o.pivot;
+    else o.anchor = o.anchor || o.pivot || o.anchorA || o.anchorB;
     if (kind === 'rope' && !Array.isArray(o.anchorB)) throw new Error('world.rope(' + 'thing, null, ...) hangs from the fixed world, so give anchorB: the fixed point it hangs from, above the thing (for example [x, 4, z] on a frame or post)');
     if (kind !== 'rope' && !Array.isArray(o.anchor)) throw new Error('world.' + kind + '(thing, null, ...) is pinned to the fixed world, so give anchor: the pivot point in world space');
+    const fixed = __v(kind === 'rope' ? o.anchorB : o.anchor, [0, 0, 0]);
+    if (fixed[1] < -0.05) throw new Error('world.' + kind + ': the fixed point ' + JSON.stringify(fixed) + ' is underground. Put it on a frame or post above the ground; for a pendulum or swing, above the hanging part (for example y = 3)');
   }
   if (kind === 'rope' && !b) {
     const top = __v(o.anchorB, [0, 0, 0]), bottom = __v(o.anchorA, __ents[a].position);
@@ -126,7 +159,7 @@ function __joint(kind, a, b, o) {
 
 function interact(id, o) {
   o = o || {};
-  __ops.push({ op: 'interact', id, prompt: String(o.prompt || 'use'), h: __h(o.onInteract) });
+  __ops.push({ op: 'interact', id: __id(id), prompt: String(o.prompt || 'use'), h: __h(o.onInteract) });
 }
 
 const items = {
@@ -139,7 +172,7 @@ const items = {
 const vehicles = {
   make(id, o) {
     o = o || {};
-    __ops.push({ op: 'vehicle', id, speed: Number(o.speed) || 8, prompt: o.prompt ? String(o.prompt) : null });
+    __ops.push({ op: 'vehicle', id: __id(id), speed: Number(o.speed) || 8, prompt: o.prompt ? String(o.prompt) : null });
   },
 };
 

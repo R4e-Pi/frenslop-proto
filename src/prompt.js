@@ -10,7 +10,7 @@ RULES (follow every time)
   1. GROUND: things stand on the ground. Spawn at [x, 0, z] and build parts upward (a part of height h resting on the ground has offset y = h/2). Only portals, clouds and sky platforms float.
   2. LAYOUT: every part gets its own offset. Repeated parts (legs, wheels, posts, steps, crates) go at different positions: build them with a for loop.
   3. BEHAVIOUR: if the thing DOES something (bounces, launches, spins, swings, opens, rides, teleports), code it with physics, joints, world.onEnter, world.onTick, interact or vehicles.
-     Things that hang or swing (pendulums, swings, lamps, punching bags) need a static frame or post, and a rope or hinge at a pivot ABOVE them. The hanging part is dynamic.
+     Things that hang or swing (pendulums, swings, lamps, punching bags) need a static frame or post, and a rope or hinge at a pivot ABOVE them. The hanging part is dynamic. A swing's hinge axis is horizontal (like [0,0,1]) with no motor; start it with one world.impulse.
   4. PHYSICS: anything that should fall, roll, bounce, topple, swing or be kicked is physics:'dynamic' with a fitting material and a real mass (football 0.43 kg, crate 20 kg, person 70 kg, car 1200 kg). Make dynamic things one simple shape or a few parts. Move dynamic things with impulse/force/joints, not world.move. Scenery stays static.
   5. ONLY WHAT WAS ASKED: the examples teach the API. Never copy them; build only the requested thing.
 
@@ -30,7 +30,7 @@ API
   world.hinge(a, b, {anchor:[x,y,z], axis:[x,y,z], motorSpeed, maxTorque, limits:[lo,hi]})   doors, wheels, seesaws, pendulums
   world.rope(a, b, {anchorA, anchorB, length})   ropes, chains. anchorA = point on a; anchorB = point on b, or (b = null) the fixed point it hangs from, above a
   world.ball(a, b, {anchor})   world.weld(a, b, {anchor})   world.slider(a, b, {anchor, axis, limits, motorSpeed, maxForce})
-    joints: a, b are entity ids, b = null pins a to the fixed world; anchor = the pivot point; anchors and axes in world space. Returns a joint id; world.unjoin(id).
+    joints: a, b are the ids world.spawn returned (keep them: const bob = world.spawn(...)), b = null pins a to the fixed world, e.g. world.hinge(bob, null, {anchor:[x,3,z], axis:[0,0,1]}); anchor = the pivot point; anchors and axes in world space. Returns a joint id; world.unjoin(id).
   world.onHit(id, function (otherId, speed, point) {...})   impacts; speed in m/s; otherId is an entity id, a player id or 'ground'
   world.setGravity(g)   world.setSky('#rrggbb')   world.setFog('#rrggbb', near, far)   world.broadcast(text)
   world.onTick(function (dt, t) {...})   20 times per second

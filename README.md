@@ -75,7 +75,13 @@ the model for its retry: building more than 10 cm underground, a joint pinned to
 
 **Syntax errors:** if the code fails only because brackets don't balance (a 3B classic: `]);` for `] });`), the
 server repairs the brackets itself and installs it, with no model round trip. Otherwise the retry shows the model its own
-failed code (up to `LLM_RETRY_CODE_CHARS`, default 1600) plus the error, so it can fix the exact line.
+failed code (up to `LLM_RETRY_CODE_CHARS`, default 1600) plus the error, so it can fix the exact line. Retries sample
+a little hotter (temperature 0.4 → 0.6 → 0.8) so a small model doesn't repeat the same answer.
+
+**How small models write joints:** the 3B tends to refer to things by the name it gave them (`'pendulum'`) rather
+than the id `world.spawn` returns, to write `'ground'` for the fixed world, to swap the arguments, and to call the
+pivot `anchorA`. All of those are accepted, because each means one thing. A pivot underground, or a part that
+starts underground (even next to a rotated part), is rejected with an error that says how to fix it.
 
 **Inspect a mod:** run `node test/inspect.mjs <room> [part of the prompt]` in a second terminal (tmux `Ctrl-b %`)
 while the server runs. For a built mod it prints the code, what it spawned, its joints, 3 s of simulated motion, and
