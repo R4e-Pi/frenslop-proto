@@ -62,6 +62,21 @@ for (const o of ops) {
     console.log(`${o.op}${o.id ? ' ' + o.id : ''}${o.value ? ' ' + r2(o.value) : ''}${o.key ? ' ' + o.key + '=' + JSON.stringify(o.value) : ''}${o.h ? ' (handler)' : ''}`);
   }
 }
+// rough centre of mass in world space (part centres weighted by bounding-box volume, Euler XYZ)
+function com(s) {
+  let m = 0; const c = [0, 0, 0];
+  for (const p of s.parts || []) {
+    const z = Array.isArray(p.size) ? p.size : [p.size ?? 1, p.size ?? 1, p.size ?? 1];
+    const w = Math.max(1e-6, Math.abs(z[0] * z[1] * z[2])), o = p.offset || [0, 0, 0];
+    for (let i = 0; i < 3; i++) c[i] += (o[i] || 0) * w; m += w;
+  }
+  let [x, y, zz] = m ? c.map(v => v / m) : [0, 0, 0];
+  const [a, b, g] = s.rotation || [0, 0, 0];
+  [x, y] = [x * Math.cos(g) - y * Math.sin(g), x * Math.sin(g) + y * Math.cos(g)];
+  [x, zz] = [x * Math.cos(b) + zz * Math.sin(b), -x * Math.sin(b) + zz * Math.cos(b)];
+  [y, zz] = [y * Math.cos(a) - zz * Math.sin(a), y * Math.sin(a) + zz * Math.cos(a)];
+  return [s.position[0] + x, s.position[1] + y, s.position[2] + zz];
+}
 const joints = ops.filter(o => o.op === 'joint');
 for (const [id, s] of spawns) {
   const js = joints.filter(j => j.a === id || j.b === id);
@@ -71,8 +86,10 @@ for (const [id, s] of spawns) {
     const anchor = j.kind === 'rope' ? (j.anchorB || j.anchor) : j.anchor;
     if (!j.b && anchor[1] < 0.3) notes.push(`${j.kind} on "${s.name}" is pinned at ground level (anchor y = ${anchor[1].toFixed(2)})`);
     if (j.a === id && j.kind !== 'rope') {
-      const d = Math.hypot(anchor[0] - s.position[0], anchor[1] - s.position[1], anchor[2] - s.position[2]);
-      if (d < 0.05 && s.physics === 'dynamic' && j.kind === 'hinge') notes.push(`hinge anchor is at the centre of "${s.name}", so it can only spin in place, not swing`);
+      const c = com(s), d = Math.hypot(anchor[0] - c[0], anchor[1] - c[1], anchor[2] - c[2]);
+      const ax = j.axis || [0, 1, 0], vertical = Math.abs(ax[1]) / (Math.hypot(...ax) || 1) > 0.9;
+      if (d < 0.05 && s.physics === 'dynamic' && j.kind === 'hinge') notes.push(`hinge anchor is at the centre of mass of "${s.name}", so it can only spin in place, not swing`);
+      else if (!j.b && s.physics === 'dynamic' && j.kind === 'hinge' && vertical && !j.motorSpeed && c[1] < anchor[1] - 0.3) notes.push(`"${s.name}" hangs from a vertical hinge axis: gravity can't turn it, so it stays frozen (a swing needs a horizontal axis)`);
     }
   }
 }

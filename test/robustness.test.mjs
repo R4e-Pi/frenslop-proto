@@ -115,6 +115,12 @@ ${joint}`;
   check('live attempts 2-3 now report it starts underground', /below the ground/.test(run(live(j2)) || ''), run(live(j2)));
   const lifted = c => c.replace('position: [x, -0.5, z]', 'position: [x, 1, z]');
   check('lifted, the underground pivot is reported', /underground/.test(run(lifted(live(j2))) || ''), run(lifted(live(j2))));
+  // 26 Nov, after update D: the 3B copied the pendulum example but wrote axis [0, 1, 0]; it froze at its 45° start
+  const ex = `const b = world.spawn({ name: 'pendulum', physics: 'dynamic', material: 'steel', mass: 8, position: [0, 3.2, 0], rotation: [0, 0, -0.79], parts: [{ shape: 'box', size: [0.06, 2, 0.06], offset: [0, -1, 0] }, { shape: 'sphere', size: [0.5, 0.5, 0.5], offset: [0, -2.2, 0] }] });`;
+  check('hanging body on a vertical hinge is an error', /vertical/.test(run(ex + `world.hinge(b, null, { anchor: [0, 3.2, 0], axis: [0, 1, 0] });`) || ''));
+  check('same body on a horizontal hinge is fine', run(ex + `world.hinge(b, null, { anchor: [0, 3.2, 0], axis: [0, 0, 1] });`) === null);
+  check('vertical hinge with a motor (a ride) is fine', run(ex + `world.hinge(b, null, { anchor: [0, 3.2, 0], axis: [0, 1, 0], motorSpeed: 2, maxTorque: 500 });`) === null);
+  check('door on a vertical hinge is fine', run(`const d = world.spawn({ name: 'door', physics: 'dynamic', position: [0, 0, 0], parts: [{ size: [1, 2, 0.1], offset: [0.5, 1, 0] }] }); world.hinge(d, null, { anchor: [0, 1, 0], axis: [0, 1, 0] });`) === null);
   check('pivot raised too, the 3B\'s joint line is accepted', run(lifted(live(j2)).replace('[x, -1, z]', '[x, 3, z]')) === null, run(lifted(live(j2)).replace('[x, -1, z]', '[x, 3, z]')));
 }
 

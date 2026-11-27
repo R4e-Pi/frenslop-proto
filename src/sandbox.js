@@ -52,7 +52,7 @@ const world = {
       bullet: !!o.bullet,
     };
     __checkGround(e);
-    __ents[id] = { name: e.name, position: e.position.slice(), rotation: e.rotation.slice(), velocity: e.velocity.slice() };
+    __ents[id] = { name: e.name, physics: e.physics, parts: e.parts, position: e.position.slice(), rotation: e.rotation.slice(), velocity: e.velocity.slice() };
     __ops.push(e);
     return id;
   },
@@ -117,6 +117,29 @@ function __ref(v) {
 // for calls that may also take player ids: translate names, pass everything else through unchanged
 function __id(v) { const r = __ref(v); return r ? r : v; }
 
+// rotate v by Euler angles (three.js 'XYZ' order: R = Rx·Ry·Rz)
+function __rot(v, r) {
+  let [x, y, z] = v; const [a, b, c] = __v(r, [0, 0, 0]);
+  [x, y] = [x * Math.cos(c) - y * Math.sin(c), x * Math.sin(c) + y * Math.cos(c)];
+  [x, z] = [x * Math.cos(b) + z * Math.sin(b), -x * Math.sin(b) + z * Math.cos(b)];
+  [y, z] = [y * Math.cos(a) - z * Math.sin(a), y * Math.sin(a) + z * Math.cos(a)];
+  return [x, y, z];
+}
+// rough centre of mass in world space: part centres weighted by bounding-box volume
+function __com(e) {
+  let m = 0; const c = [0, 0, 0];
+  for (const p of e.parts || []) {
+    const s = __v(Array.isArray(p.size) ? p.size : [p.size, p.size, p.size], [1, 1, 1]);
+    const w = Math.max(1e-6, Math.abs(s[0] * s[1] * s[2]));
+    const off = __v(p.offset, [0, 0, 0]);
+    for (let i = 0; i < 3; i++) c[i] += off[i] * w;
+    m += w;
+  }
+  const local = m ? c.map(v => v / m) : [0, 0, 0];
+  const w = __rot(local, e.rotation);
+  return [0, 1, 2].map(i => e.position[i] + w[i]);
+}
+
 let __jid = 0;
 function __joint(kind, a0, b0, o) {
   o = Object.assign({}, o || {});
@@ -139,6 +162,12 @@ function __joint(kind, a0, b0, o) {
     if (kind !== 'rope' && !Array.isArray(o.anchor)) throw new Error('world.' + kind + '(thing, null, ...) is pinned to the fixed world, so give anchor: the pivot point in world space');
     const fixed = __v(kind === 'rope' ? o.anchorB : o.anchor, [0, 0, 0]);
     if (fixed[1] < -0.05) throw new Error('world.' + kind + ': the fixed point ' + JSON.stringify(fixed) + ' is underground. Put it on a frame or post above the ground; for a pendulum or swing, above the hanging part (for example y = 3)');
+    if (kind === 'hinge' && __ents[a].physics === 'dynamic' && !Number(o.motorSpeed)) {
+      // a free hanging body on a vertical hinge: gravity can't turn it, so it never moves
+      const ax = __v(o.axis, [0, 1, 0]), n = Math.hypot(ax[0], ax[1], ax[2]) || 1;
+      const com = __com(__ents[a]);
+      if (Math.abs(ax[1]) / n > 0.9 && com[1] - fixed[1] < -0.3) throw new Error('world.hinge: the axis ' + JSON.stringify(ax) + ' is vertical, so gravity can never swing ' + __ents[a].name + ' and it stays frozen. A pendulum or swing turns about a horizontal axis, like [0, 0, 1]');
+    }
   }
   if (kind === 'rope' && !b) {
     const top = __v(o.anchorB, [0, 0, 0]), bottom = __v(o.anchorA, __ents[a].position);
